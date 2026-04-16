@@ -73,13 +73,14 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg -
     apt-get update && apt install nodejs -y
 
 # Get open5gs code and install
-RUN git clone --recursive https://github.com/open5gs/open5gs && cd open5gs && \
-    git checkout 782a97efe9e3acb1251e318bd3738ced4044dac8 && meson build --prefix=`pwd`/install && \
+COPY open5gs-EIF /open5gs-EIF
+RUN cd /open5gs-EIF && \
+    meson build --prefix=`pwd`/install && \
     ninja -C build && cd build && ninja install && \
-    mkdir -p /open5gs/install/include
+    mkdir -p /open5gs-EIF/install/include
 
 # Building WebUI of open5gs
-RUN cd open5gs/webui && npm ci
+RUN cd /open5gs-EIF/webui && npm ci
 
 # Build final image
 FROM ubuntu:jammy
@@ -132,12 +133,12 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg -
 
 RUN update-ca-certificates
 
-COPY --from=builder /open5gs/install/bin /open5gs/install/bin
-COPY --from=builder /open5gs/install/etc /open5gs/install/etc
-COPY --from=builder /open5gs/install/include /open5gs/install/include
-COPY --from=builder /open5gs/install/lib /open5gs/install/lib
-COPY --from=builder /open5gs/webui /open5gs/webui
-COPY --from=builder /open5gs/misc/db /open5gs/misc/db
+COPY --from=builder /open5gs-EIF/install/bin /open5gs/install/bin
+COPY --from=builder /open5gs-EIF/install/etc /open5gs/install/etc
+COPY --from=builder /open5gs-EIF/install/include /open5gs/install/include
+COPY --from=builder /open5gs-EIF/install/lib /open5gs/install/lib
+COPY --from=builder /open5gs-EIF/webui /open5gs/webui
+COPY --from=builder /open5gs-EIF/misc/db /open5gs/misc/db
 
 # Set the working directory to open5gs
 WORKDIR /open5gs

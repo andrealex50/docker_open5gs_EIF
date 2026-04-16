@@ -197,6 +197,27 @@ services:
     networks:
       default:
         ipv4_address: ${NSSF_IP}
+  eif:
+    image: docker_open5gs
+    depends_on:
+      - nrf
+      - scp
+      - mongo
+    container_name: eif
+    env_file:
+      - .env
+    environment:
+      - COMPONENT_NAME=eif
+    volumes:
+      - ./eif:/mnt/eif
+      - ./log:/open5gs/install/var/log/open5gs
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "7777/tcp"
+    networks:
+      default:
+        ipv4_address: ${EIF_IP}
   hss:
     image: docker_open5gs
     container_name: hss

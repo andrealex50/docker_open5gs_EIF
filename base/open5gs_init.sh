@@ -78,6 +78,9 @@ elif [[ "$COMPONENT_NAME" =~ ^(udr[[:digit:]]*$) ]]; then
 elif [[ "$COMPONENT_NAME" =~ ^(upf[[:digit:]]*$) ]]; then
 	echo "Deploying component: '$COMPONENT_NAME'"
 	/mnt/upf/${COMPONENT_NAME}_init.sh
+elif [[ "$COMPONENT_NAME" =~ ^(eif[[:digit:]]*$) ]]; then
+	echo "Deploying component: '$COMPONENT_NAME'"
+	/mnt/eif/${COMPONENT_NAME}_init.sh
 elif [[ "$COMPONENT_NAME" =~ ^(webui) ]]; then
 	echo "Deploying component: '$COMPONENT_NAME'"
 	/mnt/webui/webui_init.sh
