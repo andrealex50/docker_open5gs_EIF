@@ -357,9 +357,9 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     expose:
-      - "${METRICS_BIND_PORT}/tcp"
+      - "9090/tcp"
     ports:
-      - "${METRICS_BIND_PORT}:${METRICS_BIND_PORT}/tcp"
+      - "9090:9090/tcp"
     networks:
       default:
         ipv4_address: ${METRICS_IP}
