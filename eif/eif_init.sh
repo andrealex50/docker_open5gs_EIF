@@ -28,16 +28,17 @@
 
 export DB_URI="mongodb://${MONGO_IP}/open5gs"
 
-cp /mnt/eif/eif.yaml install/etc/open5gs
-sed -i 's|EIF_IP|'$EIF_IP'|g' install/etc/open5gs/eif.yaml
-sed -i 's|SCP_IP|'$SCP_IP'|g' install/etc/open5gs/eif.yaml
-sed -i 's|NRF_IP|'$NRF_IP'|g' install/etc/open5gs/eif.yaml
-sed -i 's|MONGO_IP|'$MONGO_IP'|g' install/etc/open5gs/eif.yaml
-sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' install/etc/open5gs/eif.yaml
+mkdir -p /open5gs-EIF/install/etc/open5gs
+cp /mnt/eif/eif.yaml /open5gs-EIF/install/etc/open5gs/eif.yaml
+
+sed -i 's|EIF_IP|'$EIF_IP'|g' /open5gs-EIF/install/etc/open5gs/eif.yaml
+sed -i 's|SCP_IP|'$SCP_IP'|g' /open5gs-EIF/install/etc/open5gs/eif.yaml
+sed -i 's|NRF_IP|'$NRF_IP'|g' /open5gs-EIF/install/etc/open5gs/eif.yaml
+sed -i 's|MONGO_IP|'$MONGO_IP'|g' /open5gs-EIF/install/etc/open5gs/eif.yaml
+sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' /open5gs-EIF/install/etc/open5gs/eif.yaml
 
 sleep 10
-cd install/bin
-exec ./open5gs-eifd $@
-
+cd /open5gs/install/bin
+exec ./open5gs-eifd "$@"
 # Sync docker time
 #ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone

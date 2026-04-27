@@ -307,6 +307,26 @@ services:
     networks:
       default:
         ipv4_address: ${EIF_IP}
+  energy-collector:
+    build: ./energy-collector
+    image: energy_collector
+    container_name: energy-collector
+    env_file:
+      - .env
+    environment:
+      - ENERGY_COLLECTOR_PORT=${ENERGY_COLLECTOR_PORT}
+      - DB_PATH=/data/energy.db
+    volumes:
+      - ./energy-collector:/app
+      - energy_collector_data:/data
+      - ./log:/open5gs/install/var/log/open5gs:ro
+    expose:
+      - "${ENERGY_COLLECTOR_PORT}/tcp"
+    ports:
+      - "${ENERGY_COLLECTOR_PORT}:${ENERGY_COLLECTOR_PORT}/tcp"
+    networks:
+      default:
+        ipv4_address: ${ENERGY_COLLECTOR_IP}
   metrics:
     build: ./metrics
     image: docker_metrics
@@ -356,6 +376,8 @@ networks:
       config:
         - subnet: ${TEST_NETWORK}
 volumes:
+  energy_collector_data:
+    name: energy_collector_data
   grafana_data:
     name: grafana_data
   mongodbdata:
