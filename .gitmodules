@@ -1,0 +1,3 @@
+[submodule "base/open5gs-EIF"]
+	path = base/open5gs-EIF
+	url = git@github.com:andrealex50/open5gs-EIF.git
