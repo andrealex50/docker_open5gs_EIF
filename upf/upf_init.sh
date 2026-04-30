@@ -61,20 +61,22 @@ python3 /mnt/upf/tun_if.py --tun_ifname $UPF_IMS_APN_IF_NAME --tun_ifmode $UPF_T
 UE_IPV4_INTERNET_APN_GATEWAY_IP=$(python3 /mnt/upf/ip_utils.py --ip_range $UE_IPV4_INTERNET)
 UE_IPV4_IMS_TUN_IP=$(python3 /mnt/upf/ip_utils.py --ip_range $UE_IPV4_IMS)
 
-cp /mnt/upf/upf.yaml install/etc/open5gs
-sed -i 's|UPF_IP|'$UPF_IP'|g' install/etc/open5gs/upf.yaml
-sed -i 's|SMF_IP|'$SMF_IP'|g' install/etc/open5gs/upf.yaml
-sed -i 's|UE_IPV4_INTERNET_APN_GATEWAY_IP|'$UE_IPV4_INTERNET_APN_GATEWAY_IP'|g' install/etc/open5gs/upf.yaml
-sed -i 's|UE_IPV4_INTERNET_APN_SUBNET|'$UE_IPV4_INTERNET'|g' install/etc/open5gs/upf.yaml
-sed -i 's|UE_IPV4_IMS_TUN_IP|'$UE_IPV4_IMS_TUN_IP'|g' install/etc/open5gs/upf.yaml
-sed -i 's|UE_IPV4_IMS_SUBNET|'$UE_IPV4_IMS'|g' install/etc/open5gs/upf.yaml
-sed -i 's|UPF_ADVERTISE_IP|'$UPF_ADVERTISE_IP'|g' install/etc/open5gs/upf.yaml
-sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' install/etc/open5gs/upf.yaml
-sed -i 's|UPF_INTERNET_APN_IF_NAME|'$UPF_INTERNET_APN_IF_NAME'|g' install/etc/open5gs/upf.yaml
-sed -i 's|UPF_IMS_APN_IF_NAME|'$UPF_IMS_APN_IF_NAME'|g' install/etc/open5gs/upf.yaml
+mkdir -p /open5gs-EIF/install/etc/open5gs
 
-cd install/bin
-exec ./open5gs-upfd $@
+cp /mnt/upf/upf.yaml /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UPF_IP|'$UPF_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|SMF_IP|'$SMF_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UE_IPV4_INTERNET_APN_GATEWAY_IP|'$UE_IPV4_INTERNET_APN_GATEWAY_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UE_IPV4_INTERNET_APN_SUBNET|'$UE_IPV4_INTERNET'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UE_IPV4_IMS_TUN_IP|'$UE_IPV4_IMS_TUN_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UE_IPV4_IMS_SUBNET|'$UE_IPV4_IMS'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UPF_ADVERTISE_IP|'$UPF_ADVERTISE_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UPF_INTERNET_APN_IF_NAME|'$UPF_INTERNET_APN_IF_NAME'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UPF_IMS_APN_IF_NAME|'$UPF_IMS_APN_IF_NAME'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+
+cd /open5gs/install/bin
+exec ./open5gs-upfd "$@"
 
 # Sync docker time
 #ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
