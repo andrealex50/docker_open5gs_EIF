@@ -9,3 +9,6 @@ log/
 # Python cache
 __pycache__/
 *.py[cod]
+
+android-radio-window/
+energy-collector/.venv/
