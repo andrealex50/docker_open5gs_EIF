@@ -291,6 +291,7 @@ def post_to_collector(collector_url, estimate):
     payload = {
         "supi": estimate["supi"],
         "ue_ip": estimate["ue_ip"],
+        "timestamp": estimate["end"],
         "energy_joules": estimate["energyInfo"]["energy"],
         "source": "android"
     }
