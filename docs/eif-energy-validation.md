@@ -12,6 +12,29 @@ This document records the validated end-to-end lab path for energy reporting thr
 
 The validated JSON field for the reported energy is `energyInfo.energy`. The legacy/generated internal C field name may remain `energy_consumption`, but the external JSON must not emit `energyConsumption`.
 
+## 3GPP Message Contract
+
+The 3GPP-facing messages in this lab are:
+
+- `EnergyEeSubsc` on `POST /neif-ee/v1/subscriptions`;
+- `EnergyEeNotif` on the callback to `notifUri`;
+- `EnergyEeReport` inside `reports[]`;
+- `EnergyInfo` inside `energyInfo`.
+
+Those messages follow the TS 29.566 / TS 29.122 JSON names:
+
+- `notifUri`
+- `eventsSubscSets`
+- `subscSetId`
+- `repPeriod`
+- `subId`
+- `reports`
+- `timeStamp`
+- `energyInfo.energy`
+- `energyInfo.energyReportTimeStamp`
+
+The Energy Collector endpoints such as `/samples/traffic`, `/samples/android`, `/ue-mappings` and the current lab `/energy/v1/report` response are internal lab APIs. They are intentionally shaped to feed the EIF, but they are not 3GPP service definitions.
+
 ## Validated Architecture
 
 ```text
@@ -90,6 +113,7 @@ location: http://172.22.0.43:7777/neif-ee/v1/subscriptions/1
   "eventsSubscSets": {
     "set1": {
       "event": "UE_ENERGY",
+      "subscSetId": "set1",
       "supi": "imsi-001011234567895",
       "repPeriod": 10
     }
@@ -121,6 +145,90 @@ location: http://172.22.0.43:7777/neif-ee/v1/subscriptions/1
 Open5GS SBI uses HTTP/2. In this lab the callback server uses h2c: HTTP/2 without TLS. Use `curl --http2-prior-knowledge` for manual calls into the EIF, and run the notify server as an h2c listener on `172.22.0.45:9998`.
 
 The EIF notification path intentionally sends directly to `notifUri` with `ogs_sbi_client_send_request()`. This avoids SCP rewriting of callback URLs during lab validation.
+
+## Collector Configuration
+
+The EIF queries the lab Energy Collector using environment variables, with defaults matching the validated Docker setup:
+
+```text
+EIF_ENERGY_COLLECTOR_HOST=172.22.0.44
+EIF_ENERGY_COLLECTOR_PORT=8088
+EIF_ENERGY_COLLECTOR_PATH=/energy/v1/report
+EIF_ENERGY_COLLECTOR_TIMEOUT_SEC=2
+```
+
+The current lab client is intentionally small and accepts an IPv4 address for `EIF_ENERGY_COLLECTOR_HOST`.
+
+## Validation After Collector Configuration
+
+Runtime validation was repeated on 2026-05-11 after making the Collector endpoint configurable.
+
+Commands used:
+
+```bash
+cd ~/docker_open5gs_EIF/base
+docker build -t docker_open5gs .
+
+cd ~/docker_open5gs_EIF
+docker compose -f sa-deploy.yaml up -d --force-recreate --no-deps eif
+python3 scripts/check_eif_3gpp_json.py
+```
+
+The recreated EIF container had the expected environment:
+
+```text
+EIF_ENERGY_COLLECTOR_HOST=172.22.0.44
+EIF_ENERGY_COLLECTOR_PATH=/energy/v1/report
+EIF_ENERGY_COLLECTOR_PORT=8088
+EIF_ENERGY_COLLECTOR_TIMEOUT_SEC=2
+```
+
+The subscription creation returned `HTTP/2 201` and a valid `EnergyEeSubsc` body. A UPF-derived sample was posted with:
+
+```text
+tx_bytes = 840
+rx_bytes = 840
+estimator_source = interface
+active_sessions = 1.0
+pfcp_peers_active = 1.0
+```
+
+The Energy Collector logs showed requests from the EIF to:
+
+```text
+GET /energy/v1/report?supi=imsi-001011234567895&event=UE_ENERGY&start=...&end=...
+```
+
+The notify server received the final h2c callback:
+
+```json
+{
+  "subId": "1",
+  "reports": [
+    {
+      "event": "UE_ENERGY",
+      "subscSetId": "upf1",
+      "timeStamp": "2026-05-11T21:15:56.187782Z",
+      "energyInfo": {
+        "energy": 0.251008,
+        "energyReportTimeStamp": "2026-05-11T21:15:56.187782Z"
+      }
+    }
+  ]
+}
+```
+
+No recent EIF logs matched these failure patterns:
+
+```text
+Notification failed
+Cannot parse notification
+ogs_sbi_parse_uri
+ogs_sbi_parse_header
+energyConsumption
+Cannot connect to Energy Collector
+Invalid EIF_ENERGY
+```
 
 ## Collector Online Test
 
@@ -157,7 +265,7 @@ curl -sS -X POST http://localhost:8088/samples/traffic \
 
 ## Current Limitations
 
-- Energy Collector host, port and path are currently hardcoded in EIF C code.
+- Energy Collector host, port, path and timeout are configurable through EIF environment variables, with lab defaults.
 - Collector access is HTTP/1.1 via a small synchronous socket client.
 - No TLS, DNS discovery, retry/backoff, chunked response parsing or circuit breaker.
 - Collector query happens in the notification timer path.
@@ -167,7 +275,6 @@ curl -sS -X POST http://localhost:8088/samples/traffic \
 
 ## Next Steps
 
-- Move Collector endpoint configuration into EIF config/env.
 - Replace the lab socket client with a proper reusable HTTP client path or an Open5GS-style SBI client where appropriate.
 - Add explicit policy for SCP vs direct callback delivery.
 - Expand event support beyond `UE_ENERGY`.

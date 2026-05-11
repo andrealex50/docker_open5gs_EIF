@@ -16,10 +16,23 @@ cd ~/docker_open5gs_EIF
 docker compose -f sa-deploy.yaml up -d --force-recreate --no-deps eif
 ```
 
+After recreating `eif`, wait until the log shows `nghttp2_server()` before creating a subscription. Subscriptions are in memory, so recreate them after restarting EIF.
+
+The EIF reads the Energy Collector endpoint from `.env`:
+
+```text
+EIF_ENERGY_COLLECTOR_HOST=172.22.0.44
+EIF_ENERGY_COLLECTOR_PORT=8088
+EIF_ENERGY_COLLECTOR_PATH=/energy/v1/report
+EIF_ENERGY_COLLECTOR_TIMEOUT_SEC=2
+```
+
 If the full stack is not already running:
 
 ```bash
-docker compose -f sa-deploy.yaml up -d nrf scp mongo eif energy-collector
+docker compose -f sa-deploy.yaml up -d mongo nrf scp amf smf upf eif energy-collector
+docker compose -f nr-gnb.yaml up -d
+docker compose -f nr-ue.yaml up -d
 ```
 
 ## Start Notify Server
@@ -33,6 +46,8 @@ The server listens on `172.22.0.45:9998` in the Docker network and prints method
 
 ## Insert Collector Sample
 
+Simple synthetic sample:
+
 ```bash
 curl -sS -X POST http://localhost:8088/samples/traffic \
   -H "Content-Type: application/json" \
@@ -41,6 +56,13 @@ curl -sS -X POST http://localhost:8088/samples/traffic \
     "tx_bytes": 0,
     "rx_bytes": 0
   }' | jq .
+```
+
+UPF-derived sample from the current lab path:
+
+```bash
+docker exec nr_ue sh -lc 'ping -c 20 -I uesimtun0 8.8.8.8 >/tmp/nr_ue_ping.log 2>&1 &' \
+  && python3 scripts/upf_traffic_estimator.py --register-mapping --post
 ```
 
 ## Create Subscription
@@ -77,7 +99,7 @@ tail -f log/eif.log
 Useful filters:
 
 ```bash
-docker logs eif 2>&1 | grep -E "Energy Collector|EIF notify|energyInfo"
+docker logs eif 2>&1 | grep -E "Energy Collector|EIF notify|energyInfo|Notification failed"
 ```
 
 ## Collector Logs
@@ -112,6 +134,49 @@ Restart Collector:
 
 ```bash
 docker start energy-collector
+```
+
+## Confirm Final JSON
+
+The notify server body should contain:
+
+```json
+{
+  "energyInfo": {
+    "energy": 0.251008
+  }
+}
+```
+
+You can also run the static and sample JSON regression check:
+
+```bash
+python3 scripts/check_eif_3gpp_json.py
+```
+
+After recreating EIF, also confirm the configured Collector endpoint reached the container:
+
+```bash
+docker exec eif sh -lc 'env | grep EIF_ENERGY_COLLECTOR | sort'
+```
+
+Expected output:
+
+```text
+EIF_ENERGY_COLLECTOR_HOST=172.22.0.44
+EIF_ENERGY_COLLECTOR_PATH=/energy/v1/report
+EIF_ENERGY_COLLECTOR_PORT=8088
+EIF_ENERGY_COLLECTOR_TIMEOUT_SEC=2
+```
+
+It must not contain:
+
+```json
+{
+  "energyInfo": {
+    "energyConsumption": 0.251008
+  }
+}
 ```
 
 ## Delete Old Subscriptions

@@ -26,17 +26,19 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-cp /mnt/amf/amf.yaml install/etc/open5gs
-sed -i 's|AMF_IP|'$AMF_IP'|g' install/etc/open5gs/amf.yaml
-sed -i 's|SCP_IP|'$SCP_IP'|g' install/etc/open5gs/amf.yaml
-sed -i 's|NRF_IP|'$NRF_IP'|g' install/etc/open5gs/amf.yaml
-sed -i 's|MNC|'$MNC'|g' install/etc/open5gs/amf.yaml
-sed -i 's|MCC|'$MCC'|g' install/etc/open5gs/amf.yaml
-sed -i 's|TAC|'$TAC'|g' install/etc/open5gs/amf.yaml
-sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' install/etc/open5gs/amf.yaml
+mkdir -p /open5gs-EIF/install/etc/open5gs
 
-cd install/bin
-exec ./open5gs-amfd $@
+cp /mnt/amf/amf.yaml /open5gs-EIF/install/etc/open5gs/amf.yaml
+sed -i 's|AMF_IP|'$AMF_IP'|g' /open5gs-EIF/install/etc/open5gs/amf.yaml
+sed -i 's|SCP_IP|'$SCP_IP'|g' /open5gs-EIF/install/etc/open5gs/amf.yaml
+sed -i 's|NRF_IP|'$NRF_IP'|g' /open5gs-EIF/install/etc/open5gs/amf.yaml
+sed -i 's|MNC|'$MNC'|g' /open5gs-EIF/install/etc/open5gs/amf.yaml
+sed -i 's|MCC|'$MCC'|g' /open5gs-EIF/install/etc/open5gs/amf.yaml
+sed -i 's|TAC|'$TAC'|g' /open5gs-EIF/install/etc/open5gs/amf.yaml
+sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' /open5gs-EIF/install/etc/open5gs/amf.yaml
+
+cd /open5gs/install/bin
+exec ./open5gs-amfd "$@"
 
 # Sync docker time
 #ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone

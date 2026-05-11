@@ -1,0 +1,170 @@
+# EIF UPF Traffic Estimator
+
+## Goal
+
+This document describes the lab-side UPF traffic estimator used to feed the Energy Collector with network-observed activity for EIF `UE_ENERGY` reports.
+
+The EIF itself remains unchanged:
+
+```text
+EIF -> GET /energy/v1/report -> Energy Collector
+```
+
+The new input path is:
+
+```text
+UPF Prometheus metrics -> scripts/upf_traffic_estimator.py -> Energy Collector /samples/traffic
+```
+
+## What The Script Does
+
+`scripts/upf_traffic_estimator.py`:
+
+1. reads UPF Prometheus metrics at the start of a window;
+2. waits for a configurable interval;
+3. reads the metrics again;
+4. calculates non-negative deltas for N3 counters;
+5. if Prometheus traffic counters do not move, falls back to UPF interface counters from `ogstun`;
+6. builds a traffic sample for one SUPI/UE IP;
+7. optionally posts that sample to the Energy Collector.
+
+The Collector then estimates `energyInfo.energy` from the posted traffic sample using its configured traffic energy model.
+
+## Metrics Used
+
+Preferred Prometheus byte counters:
+
+```text
+fivegs_ep_n3_gtp_indatavolumeqosleveln3upf
+fivegs_ep_n3_gtp_outdatavolumeqosleveln3upf
+```
+
+Fallback packet counters:
+
+```text
+fivegs_ep_n3_gtp_indatapktn3upf
+fivegs_ep_n3_gtp_outdatapktn3upf
+```
+
+If byte deltas are zero but packet deltas move, the script estimates bytes as:
+
+```text
+packet_delta * avg_packet_bytes
+```
+
+The default `avg_packet_bytes` is `1200`.
+
+Runtime note from the current lab: the UPF exposes the N3 Prometheus metrics, but the N3 packet/byte counters may remain at zero even while UE traffic is flowing. For that case, the script defaults to `--source auto` and falls back to Docker interface counters:
+
+```text
+docker exec upf cat /sys/class/net/ogstun/statistics/rx_bytes
+docker exec upf cat /sys/class/net/ogstun/statistics/tx_bytes
+```
+
+## Direction Mapping
+
+For the traffic sample sent to the Collector from Prometheus metrics:
+
+- UPF N3 incoming data is treated as UE uplink and posted as `tx_bytes`.
+- UPF N3 outgoing data is treated as UE downlink and posted as `rx_bytes`.
+
+For the interface fallback:
+
+- UPF `ogstun` RX bytes are treated as UE uplink and posted as `tx_bytes`.
+- UPF `ogstun` TX bytes are treated as UE downlink and posted as `rx_bytes`.
+
+This is a lab approximation intended to make UPF-observed traffic consumable by the existing Energy Collector traffic model.
+
+## Basic Usage
+
+Run from the repository root:
+
+```bash
+python3 scripts/upf_traffic_estimator.py
+```
+
+Default values:
+
+```text
+UPF metrics:   http://172.22.0.8:9091/metrics
+Collector:     http://172.22.0.44:8088
+Source:        auto
+UPF container: upf
+UPF interface: ogstun
+SUPI:          imsi-001011234567895
+UE IP:         192.168.100.2
+Interval:      10 seconds
+```
+
+## Post To Collector
+
+Register the UE mapping and post one sample:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --register-mapping \
+  --post
+```
+
+Force the interface-counter path:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --source interface \
+  --register-mapping \
+  --post
+```
+
+Use a longer window while generating traffic from the UE:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --interval 30 \
+  --register-mapping \
+  --post
+```
+
+Override endpoints if needed:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --upf-metrics-url http://172.22.0.8:9091/metrics \
+  --collector-url http://172.22.0.44:8088 \
+  --supi imsi-001011234567895 \
+  --ue-ip 192.168.100.2 \
+  --interval 15 \
+  --post
+```
+
+## Validation Flow
+
+1. Start the Open5GS services, EIF and Energy Collector.
+2. Start UERANSIM gNB and UE.
+3. Confirm the UE has a PDU session and traffic can be generated.
+4. Run the UPF estimator with `--post` while traffic is active.
+5. Query the Collector:
+
+```bash
+curl "http://172.22.0.44:8088/energy/v1/report?supi=imsi-001011234567895&event=UE_ENERGY&start=<start>&end=<end>"
+```
+
+6. Create an EIF `UE_ENERGY` subscription and confirm the callback contains:
+
+```json
+{
+  "energyInfo": {
+    "energy": 0.0
+  }
+}
+```
+
+with a value greater than zero when traffic deltas are observed.
+
+## Limitations
+
+- Metrics are global UPF counters, not per-UE counters.
+- Attribution to a SUPI depends on the supplied `--supi` and `--ue-ip`.
+- The `ogstun` interface fallback is also global to the UPF interface.
+- Packet-to-byte fallback is approximate.
+- Counter resets are handled by clamping negative deltas to zero.
+- The script is intended for controlled lab validation, not production accounting.

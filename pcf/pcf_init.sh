@@ -28,16 +28,18 @@
 
 export DB_URI="mongodb://${MONGO_IP}/open5gs"
 
-cp /mnt/pcf/pcf.yaml install/etc/open5gs
-sed -i 's|PCF_IP|'$PCF_IP'|g' install/etc/open5gs/pcf.yaml
-sed -i 's|SCP_IP|'$SCP_IP'|g' install/etc/open5gs/pcf.yaml
-sed -i 's|NRF_IP|'$NRF_IP'|g' install/etc/open5gs/pcf.yaml
-sed -i 's|MONGO_IP|'$MONGO_IP'|g' install/etc/open5gs/pcf.yaml
-sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' install/etc/open5gs/pcf.yaml
+mkdir -p /open5gs-EIF/install/etc/open5gs
+
+cp /mnt/pcf/pcf.yaml /open5gs-EIF/install/etc/open5gs/pcf.yaml
+sed -i 's|PCF_IP|'$PCF_IP'|g' /open5gs-EIF/install/etc/open5gs/pcf.yaml
+sed -i 's|SCP_IP|'$SCP_IP'|g' /open5gs-EIF/install/etc/open5gs/pcf.yaml
+sed -i 's|NRF_IP|'$NRF_IP'|g' /open5gs-EIF/install/etc/open5gs/pcf.yaml
+sed -i 's|MONGO_IP|'$MONGO_IP'|g' /open5gs-EIF/install/etc/open5gs/pcf.yaml
+sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' /open5gs-EIF/install/etc/open5gs/pcf.yaml
 
 sleep 10
-cd install/bin
-exec ./open5gs-pcfd $@
+cd /open5gs/install/bin
+exec ./open5gs-pcfd "$@"
 
 # Sync docker time
 #ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone

@@ -16,6 +16,18 @@ Quite contrary to the name of the repository, this repository contains docker fi
   - https://gitea.osmocom.org/ims-volte-vowifi/strongswan-epdg
 - SWu-IKEv2 - https://github.com/fasferraz/SWu-IKEv2
 
+## EIF Lab Notes
+
+The EIF-specific work in this fork is documented here:
+
+- [EIF energy validation](docs/eif-energy-validation.md): validated EIF -> Energy Collector -> `EnergyEeReport` -> h2c callback path.
+- [EIF 3GPP message compliance](docs/eif-3gpp-message-compliance.md): schema matrix for `EnergyEeSubsc`, `EnergyEeNotif`, `EnergyEeReport` and `EnergyInfo`.
+- [Manual EIF test commands](docs/eif-energy-test-commands.md): rebuild, restart, subscription, notify server and fallback checks.
+- [UPF traffic estimator](docs/eif-upf-traffic-estimator.md): how `scripts/upf_traffic_estimator.py` feeds `/samples/traffic`.
+- [UPF technical status](docs/eif-upf-technical-status.md): current validated UPF lab flow and remaining production risks.
+- [Android radio estimator](docs/eif-android-radio-estimator.md): Android-side estimator model.
+- [Android validation](docs/eif-android-validation.md): previous Android end-to-end validation evidence.
+
 ## Table of Contents
 
 - [Tested Setup](#tested-setup)

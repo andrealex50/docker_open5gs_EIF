@@ -26,17 +26,19 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-cp /mnt/udm/udm.yaml install/etc/open5gs
-sed -i 's|UDM_IP|'$UDM_IP'|g' install/etc/open5gs/udm.yaml
-sed -i 's|SCP_IP|'$SCP_IP'|g' install/etc/open5gs/udm.yaml
-sed -i 's|NRF_IP|'$NRF_IP'|g' install/etc/open5gs/udm.yaml
-sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' install/etc/open5gs/udm.yaml
+mkdir -p /open5gs-EIF/install/etc/open5gs/hnet
 
-cp /mnt/udm/curve25519-1.key install/etc/open5gs/hnet
-cp /mnt/udm/secp256r1-2.key install/etc/open5gs/hnet
+cp /mnt/udm/udm.yaml /open5gs-EIF/install/etc/open5gs/udm.yaml
+sed -i 's|UDM_IP|'$UDM_IP'|g' /open5gs-EIF/install/etc/open5gs/udm.yaml
+sed -i 's|SCP_IP|'$SCP_IP'|g' /open5gs-EIF/install/etc/open5gs/udm.yaml
+sed -i 's|NRF_IP|'$NRF_IP'|g' /open5gs-EIF/install/etc/open5gs/udm.yaml
+sed -i 's|MAX_NUM_UE|'$MAX_NUM_UE'|g' /open5gs-EIF/install/etc/open5gs/udm.yaml
 
-cd install/bin
-exec ./open5gs-udmd $@
+cp /mnt/udm/curve25519-1.key /open5gs-EIF/install/etc/open5gs/hnet
+cp /mnt/udm/secp256r1-2.key /open5gs-EIF/install/etc/open5gs/hnet
+
+cd /open5gs/install/bin
+exec ./open5gs-udmd "$@"
 
 # Sync docker time
 #ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
