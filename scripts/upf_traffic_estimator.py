@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import ipaddress
 import json
 import re
 import subprocess
@@ -34,8 +35,12 @@ def fetch_text(url, timeout_s):
 
 
 def read_container_file(container, path, timeout_s):
+    return run_container_command(container, ["cat", path], timeout_s)
+
+
+def run_container_command(container, command, timeout_s):
     result = subprocess.run(
-        ["docker", "exec", container, "cat", path],
+        ["docker", "exec", container, *command],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -43,7 +48,9 @@ def read_container_file(container, path, timeout_s):
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f"failed to read {container}:{path}: {result.stderr.strip()}")
+        raise RuntimeError(
+            f"failed to run in {container}: {' '.join(command)}: {result.stderr.strip()}"
+        )
 
     return result.stdout.strip()
 
@@ -62,6 +69,113 @@ def fetch_interface_stats(container, interface_name, timeout_s):
         "rx_packets": rx_packets,
         "tx_packets": tx_packets,
     }
+
+
+def iptables_comment(prefix, direction):
+    return f"{prefix}-{direction}"
+
+
+def add_iptables_rule(args, direction, comment):
+    if direction == "ul":
+        match_args = ["-i", args.upf_interface, "-s", args.ue_ip]
+    elif direction == "dl":
+        match_args = ["-o", args.upf_interface, "-d", args.ue_ip]
+    else:
+        raise ValueError(f"invalid direction {direction}")
+
+    run_container_command(
+        args.upf_container,
+        [
+            "iptables",
+            "-I",
+            "FORWARD",
+            "1",
+            *match_args,
+            "-m",
+            "comment",
+            "--comment",
+            comment,
+        ],
+        args.timeout,
+    )
+
+
+def delete_iptables_rule(args, direction, comment):
+    if direction == "ul":
+        match_args = ["-i", args.upf_interface, "-s", args.ue_ip]
+    elif direction == "dl":
+        match_args = ["-o", args.upf_interface, "-d", args.ue_ip]
+    else:
+        raise ValueError(f"invalid direction {direction}")
+
+    try:
+        run_container_command(
+            args.upf_container,
+            [
+                "iptables",
+                "-D",
+                "FORWARD",
+                *match_args,
+                "-m",
+                "comment",
+                "--comment",
+                comment,
+            ],
+            args.timeout,
+        )
+    except RuntimeError as exc:
+        print(f"Warning: failed to remove iptables rule {comment}: {exc}")
+
+
+def setup_iptables_counters(args):
+    ipaddress.ip_address(args.ue_ip)
+
+    prefix = f"eif-upf-{int(time.time() * 1000)}"
+    ul_comment = iptables_comment(prefix, "ul")
+    dl_comment = iptables_comment(prefix, "dl")
+
+    run_container_command(
+        args.upf_container,
+        ["sh", "-lc", "command -v iptables && command -v iptables-save"],
+        args.timeout,
+    )
+    add_iptables_rule(args, "ul", ul_comment)
+
+    try:
+        add_iptables_rule(args, "dl", dl_comment)
+    except Exception:
+        delete_iptables_rule(args, "ul", ul_comment)
+        raise
+
+    return {
+        "prefix": prefix,
+        "ul_comment": ul_comment,
+        "dl_comment": dl_comment,
+    }
+
+
+def cleanup_iptables_counters(args, counters):
+    if not counters:
+        return
+
+    delete_iptables_rule(args, "ul", counters["ul_comment"])
+    delete_iptables_rule(args, "dl", counters["dl_comment"])
+
+
+def fetch_iptables_counter_bytes(args, comment):
+    output = run_container_command(args.upf_container, ["iptables-save", "-c"], args.timeout)
+
+    for line in output.splitlines():
+        if comment not in line:
+            continue
+
+        match = re.match(r"^\[(\d+):(\d+)\]\s+-A\s+FORWARD\b", line)
+        if not match:
+            continue
+
+        return int(match.group(1)), int(match.group(2))
+
+    raise RuntimeError(f"iptables counter rule not found for comment {comment}")
 
 
 def post_json(url, payload, timeout_s):
@@ -192,6 +306,39 @@ def build_interface_sample(start_stats, end_stats, end_metrics, args, start_ts, 
     }
 
 
+def build_iptables_sample(counters, end_metrics, args, start_ts, end_ts):
+    uplink_packets, uplink_bytes = fetch_iptables_counter_bytes(args, counters["ul_comment"])
+    downlink_packets, downlink_bytes = fetch_iptables_counter_bytes(args, counters["dl_comment"])
+
+    return {
+        "supi": args.supi,
+        "ue_ip": args.ue_ip,
+        "timestamp": end_ts,
+        "tx_bytes": uplink_bytes,
+        "rx_bytes": downlink_bytes,
+        "source": "upf",
+        "metadata": {
+            "estimator_source": "ue-iptables",
+            "start": start_ts,
+            "end": end_ts,
+            "upf_container": args.upf_container,
+            "upf_interface": args.upf_interface,
+            "iptables_chain": "FORWARD",
+            "uplink_match": f"-i {args.upf_interface} -s {args.ue_ip}",
+            "downlink_match": f"-o {args.upf_interface} -d {args.ue_ip}",
+            "uplink_packets_delta": uplink_packets,
+            "downlink_packets_delta": downlink_packets,
+            "direction_note": (
+                f"UPF FORWARD packets from UE IP via {args.upf_interface} are "
+                f"treated as tx_bytes; packets to UE IP via {args.upf_interface} "
+                "are treated as rx_bytes."
+            ),
+            "active_sessions": metric_max(end_metrics, METRIC_UPF_SESSIONS),
+            "pfcp_peers_active": metric_max(end_metrics, METRIC_PFCP_PEERS),
+        },
+    }
+
+
 def collector_traffic_payload(sample):
     return {
         "supi": sample["supi"],
@@ -213,6 +360,16 @@ def register_mapping(args):
     return post_json(f"{args.collector_url}/ue-mappings", payload, args.timeout)
 
 
+def emit_sample(sample, args):
+    print(json.dumps(sample, indent=2))
+
+    if args.post:
+        payload = collector_traffic_payload(sample)
+        status, body = post_json(f"{args.collector_url}/samples/traffic", payload, args.timeout)
+        print(f"\nCollector response: HTTP {status}")
+        print(body)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Estimate UE traffic from UPF Prometheus counters and optionally post it to the Energy Collector."
@@ -224,7 +381,11 @@ def main():
     parser.add_argument("--interval", type=float, default=10.0)
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--avg-packet-bytes", type=int, default=1200)
-    parser.add_argument("--source", choices=["auto", "prometheus", "interface"], default="auto")
+    parser.add_argument(
+        "--source",
+        choices=["auto", "prometheus", "interface", "ue-iptables"],
+        default="auto",
+    )
     parser.add_argument("--upf-container", default=UPF_CONTAINER_DEFAULT)
     parser.add_argument("--upf-interface", default=UPF_INTERFACE_DEFAULT)
     parser.add_argument("--register-mapping", action="store_true")
@@ -241,6 +402,28 @@ def main():
         status, body = register_mapping(args)
         print(f"Mapping response: HTTP {status}")
         print(body)
+
+    if args.source == "ue-iptables":
+        counters = None
+        try:
+            print(
+                f"Installing temporary per-UE iptables counters: "
+                f"{args.upf_container}:{args.upf_interface} ue_ip={args.ue_ip}"
+            )
+            counters = setup_iptables_counters(args)
+            start_ts = utc_now()
+
+            print(f"Waiting {args.interval:.3f}s")
+            time.sleep(args.interval)
+
+            end_metrics = fetch_text(args.upf_metrics_url, args.timeout)
+            end_ts = utc_now()
+            sample = build_iptables_sample(counters, end_metrics, args, start_ts, end_ts)
+        finally:
+            cleanup_iptables_counters(args, counters)
+
+        emit_sample(sample, args)
+        return
 
     print(f"Reading UPF metrics: {args.upf_metrics_url}")
     start_ts = utc_now()
@@ -293,13 +476,7 @@ def main():
             end_ts,
         )
 
-    print(json.dumps(sample, indent=2))
-
-    if args.post:
-        payload = collector_traffic_payload(sample)
-        status, body = post_json(f"{args.collector_url}/samples/traffic", payload, args.timeout)
-        print(f"\nCollector response: HTTP {status}")
-        print(body)
+    emit_sample(sample, args)
 
 
 if __name__ == "__main__":

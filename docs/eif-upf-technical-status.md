@@ -55,7 +55,8 @@ SUPI:             imsi-001011234567895
 - The UPF exposes Prometheus metrics on port `9091`.
 - `fivegs_upffunction_upf_sessionnbr` reaches `1` while the UE session is active.
 - In the current lab, the N3 byte/packet Prometheus counters may stay at zero even when traffic is flowing.
-- The estimator therefore uses `--source auto` and falls back to `upf:ogstun` interface counters.
+- The estimator supports `--source ue-iptables` for temporary per-UE counters keyed by `ue_ip`.
+- The estimator still supports `--source auto`, which falls back to `upf:ogstun` interface counters.
 - The Energy Collector stores the resulting `/samples/traffic` sample.
 - The EIF queries the Collector and receives `energyInfo.energy`.
 - The final notification is sent directly to `notifUri`, not via SCP.
@@ -67,6 +68,15 @@ Main script:
 
 ```bash
 python3 scripts/upf_traffic_estimator.py --register-mapping --post
+```
+
+More UE-specific lab mode:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --source ue-iptables \
+  --register-mapping \
+  --post
 ```
 
 Recommended traffic generation during the estimator window:
@@ -99,7 +109,12 @@ Direction mapping for the interface fallback:
 - `ogstun` RX bytes are treated as UE uplink and posted as `tx_bytes`.
 - `ogstun` TX bytes are treated as UE downlink and posted as `rx_bytes`.
 
-This is a lab approximation. It is useful for controlled validation, but it is not per-UE production accounting.
+Direction mapping for `--source ue-iptables`:
+
+- `FORWARD -i ogstun -s <ue_ip>` bytes are treated as UE uplink and posted as `tx_bytes`.
+- `FORWARD -o ogstun -d <ue_ip>` bytes are treated as UE downlink and posted as `rx_bytes`.
+
+This is a better lab approximation than global interface counters. It is still not production accounting because it depends on the configured `ue_ip -> supi` mapping and on Linux firewall counters inside the UPF container.
 
 ## End-To-End Validation Commands
 
@@ -199,14 +214,14 @@ Cannot parse notification HTTP response
 
 - Prometheus N3 counters are global UPF metrics and may not move in this lab setup.
 - The `ogstun` fallback is also global to the UPF interface, not per UE.
-- SUPI attribution is supplied by the lab mapping, not discovered from PFCP session state.
+- The `ue-iptables` mode is per UE IP, but SUPI attribution is still supplied by the lab mapping, not discovered from PFCP session state.
 - The Collector store is in memory.
 - The EIF Collector endpoint is configurable through `EIF_ENERGY_COLLECTOR_HOST`, `EIF_ENERGY_COLLECTOR_PORT`, `EIF_ENERGY_COLLECTOR_PATH` and `EIF_ENERGY_COLLECTOR_TIMEOUT_SEC`.
 - Direct callback to `notifUri` bypasses SCP intentionally for lab testing.
 
 ## Production Work Left
 
-- Replace global UPF/interface attribution with per-session/per-UE accounting.
+- Replace lab `ue_ip` attribution with per-session/per-UE accounting discovered from PFCP/session state.
 - Add retry/backoff and metrics around Collector queries.
 - Decide whether production notification callbacks should go direct or via SCP.
 - Add persistence or an external store for Collector samples.

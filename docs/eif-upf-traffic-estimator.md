@@ -24,9 +24,10 @@ UPF Prometheus metrics -> scripts/upf_traffic_estimator.py -> Energy Collector /
 2. waits for a configurable interval;
 3. reads the metrics again;
 4. calculates non-negative deltas for N3 counters;
-5. if Prometheus traffic counters do not move, falls back to UPF interface counters from `ogstun`;
-6. builds a traffic sample for one SUPI/UE IP;
-7. optionally posts that sample to the Energy Collector.
+5. optionally installs temporary per-UE `iptables` counter rules for one UE IP;
+6. if Prometheus traffic counters do not move, falls back to UPF interface counters from `ogstun`;
+7. builds a traffic sample for one SUPI/UE IP;
+8. optionally posts that sample to the Energy Collector.
 
 The Collector then estimates `energyInfo.energy` from the posted traffic sample using its configured traffic energy model.
 
@@ -61,6 +62,24 @@ docker exec upf cat /sys/class/net/ogstun/statistics/rx_bytes
 docker exec upf cat /sys/class/net/ogstun/statistics/tx_bytes
 ```
 
+For a more UE-specific lab measurement, use:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --source ue-iptables \
+  --register-mapping \
+  --post
+```
+
+This installs temporary counter-only rules in the UPF container:
+
+```text
+FORWARD -i ogstun -s <ue_ip>
+FORWARD -o ogstun -d <ue_ip>
+```
+
+The rules are removed when the measurement window ends.
+
 ## Direction Mapping
 
 For the traffic sample sent to the Collector from Prometheus metrics:
@@ -73,7 +92,12 @@ For the interface fallback:
 - UPF `ogstun` RX bytes are treated as UE uplink and posted as `tx_bytes`.
 - UPF `ogstun` TX bytes are treated as UE downlink and posted as `rx_bytes`.
 
-This is a lab approximation intended to make UPF-observed traffic consumable by the existing Energy Collector traffic model.
+For `--source ue-iptables`:
+
+- packets from `ue_ip` entering `FORWARD` through `ogstun` are treated as UE uplink and posted as `tx_bytes`;
+- packets to `ue_ip` leaving `FORWARD` through `ogstun` are treated as UE downlink and posted as `rx_bytes`.
+
+The `ue-iptables` source is still a lab measurement, but it is more specific than the global `ogstun` interface counters.
 
 ## Basic Usage
 
@@ -111,6 +135,15 @@ Force the interface-counter path:
 ```bash
 python3 scripts/upf_traffic_estimator.py \
   --source interface \
+  --register-mapping \
+  --post
+```
+
+Use temporary per-UE UPF counters:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --source ue-iptables \
   --register-mapping \
   --post
 ```
@@ -163,8 +196,10 @@ with a value greater than zero when traffic deltas are observed.
 ## Limitations
 
 - Metrics are global UPF counters, not per-UE counters.
-- Attribution to a SUPI depends on the supplied `--supi` and `--ue-ip`.
-- The `ogstun` interface fallback is also global to the UPF interface.
+- In `auto`, `prometheus` and `interface` modes, attribution to a SUPI depends on the supplied `--supi` and `--ue-ip`.
+- The `ogstun` interface fallback is global to the UPF interface.
+- The `ue-iptables` mode narrows accounting to the configured UE IP, but still depends on a trusted `ue_ip -> supi` mapping.
+- The `ue-iptables` mode requires the UPF container to have `iptables`, `iptables-save` and permission to insert/remove temporary rules.
 - Packet-to-byte fallback is approximate.
 - Counter resets are handled by clamping negative deltas to zero.
 - The script is intended for controlled lab validation, not production accounting.
