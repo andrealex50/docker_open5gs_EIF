@@ -153,7 +153,7 @@ Run one Android collection window and post it:
 ```bash
 python3 scripts/android_radio_estimator.py \
   --duration 45 \
-  --output-dir android-radio-window \
+  --output-dir ../docker_open5gs_EIF_artifacts/android-radio-window \
   --supi imsi-001011234567895 \
   --ue-ip 192.168.100.2 \
   --collector-url http://172.22.0.44:8088 \
