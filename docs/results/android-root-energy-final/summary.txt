@@ -1,0 +1,25 @@
+Android Root Energy Final Results
+========================================
+
+Per-run results
+scenario,rep,energy_J,duration_s,avg_power_W,samples
+nr_idle,1,115.720,70.5,1.6408,255
+nr_idle,2,56.275,60.8,0.9262,215
+nr_idle,3,58.839,59.7,0.9863,214
+light,1,62.862,49.6,1.2675,175
+light,2,66.900,54.5,1.2276,191
+light,3,64.317,51.5,1.2500,180
+hard,1,55.257,52.4,1.0540,187
+hard,2,76.122,57.7,1.3190,203
+hard,3,70.386,54.0,1.3040,188
+
+Summary
+scenario,mean_energy_J,std_energy_J,mean_power_W,std_power_W,n
+nr_idle,76.944,33.605,1.1844,0.3964,3
+light,64.693,2.045,1.2484,0.0200,3
+hard,67.255,10.779,1.2256,0.1489,3
+
+Interpretation
+- energy_J is computed from current_now/current_avg and voltage_now.
+- Formula: E[J] = sum(abs(current_uA) * voltage_uV * 1e-12 * delta_t_s).
+- This measures total device energy, not isolated modem rail energy.
