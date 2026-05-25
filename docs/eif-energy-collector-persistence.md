@@ -80,6 +80,72 @@ Result after restart:
 }
 ```
 
+Latest restart-tolerant check:
+
+```text
+Before restart:
+storage=mongodb
+ue_mappings=1
+traffic_samples=4
+android_samples=0
+
+After docker restart energy-collector:
+storage=mongodb
+ue_mappings=1
+traffic_samples=4
+android_samples=0
+```
+
+Conclusion:
+
+```text
+MongoDB persistence validated across Energy Collector restart.
+```
+
+## End-to-End Post-Mongo Test
+
+After MongoDB persistence was added, the full path was tested again:
+
+```text
+POST /samples/traffic
+GET /energy/v1/report
+restart energy-collector
+GET /energy/v1/report again
+create EIF subscription
+receive HTTP/2 h2c callback with energyInfo.energy
+delete test subscription
+```
+
+This confirms that persistence is not only visible in MongoDB, but also remains compatible with the EIF notification path.
+
+The final architecture is:
+
+```text
+UPF estimator / Android / manual samples
+        |
+        v
+Energy Collector
+        |
+        v
+MongoDB
+        |
+        v
+EIF
+        |
+        v
+notifUri
+```
+
+Demo/report wording:
+
+```text
+Initially, the Energy Collector stored UE mappings and samples in memory. It has now been extended to persist UE mappings, traffic samples and Android samples in MongoDB, with an in-memory fallback if MongoDB is unavailable.
+```
+
+```text
+The Energy Collector persists UE mappings and energy-related samples in MongoDB, while keeping an in-memory fallback. This makes the collector restart-tolerant and closer to a realistic telemetry backend.
+```
+
 ## Notes
 
 This is still laboratory persistence:
