@@ -648,24 +648,25 @@ Neste dispositivo, Android/root fornece bom contexto rádio, mas não expõe ene
 real do rail do modem. Por isso fica como referência auxiliar.
 ```
 
-### 9. Collector com armazenamento em memória
+### 9. Collector com persistência MongoDB
 
 Decisão:
 
 ```text
-O Energy Collector guarda samples em memória.
+O Energy Collector guarda mappings e samples numa base MongoDB própria.
 ```
 
 Motivo:
 
-- suficiente para demo e validação funcional;
-- reduz complexidade;
-- permite testar rapidamente o fluxo EIF -> Collector -> notificação.
+- mantém os dados depois de reiniciar o `energy-collector`;
+- aproveita o MongoDB que já existe na stack Open5GS;
+- mantém a API do Collector igual para o EIF e para os scripts.
 
 Trade-off:
 
-- samples perdem-se ao reiniciar o container;
-- para produção seria preciso persistência ou integração com uma base de dados.
+- continua a ser uma persistência laboratorial simples;
+- ainda falta política de retenção/limpeza de samples antigos;
+- se o MongoDB não estiver disponível, o Collector usa fallback em memória.
 
 ### 10. Implementar primeiro `UE_ENERGY`
 
@@ -724,7 +725,7 @@ No laboratório, o callback direto para o `notifUri` é intencional para observa
 
 ### Quais são as limitações atuais?
 
-- O Collector guarda dados em memória.
+- O Collector persiste dados em MongoDB quando disponível, com fallback em memória.
 - A associação no UPF depende do mapeamento `ue_ip -> supi`.
 - O modo `ue-iptables` é laboratorial.
 - A energia é estimada, não é medição real do rail do modem.
@@ -740,7 +741,7 @@ No laboratório, o callback direto para o `notifUri` é intencional para observa
 - `UE_SNSSAI_ENERGY`: trocar a tag manual por S-NSSAI vindo da sessão.
 - `SERVICE_FLOW_ENERGY`: trocar a tag manual por classificação real de flow/app.
 - Substituir a atribuição laboratorial por mapeamento real vindo de PFCP/session state.
-- Adicionar persistência e metadata de fonte/confiança no Collector.
+- Adicionar política de retenção e metadata de fonte/confiança no Collector.
 
 ## Ficheiros Que Vale A Pena Abrir Na Demo
 

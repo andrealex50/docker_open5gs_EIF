@@ -10,6 +10,7 @@ docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -E 'mongo|nrf|scp|amf|
 
 # 3) Esperar até o Energy Collector estar pronto.
 until curl -sS http://172.22.0.44:8088/health >/dev/null; do sleep 1; done
+curl -sS http://172.22.0.44:8088/health | jq .
 
 # 4) Subir servidor HTTP/2 h2c que recebe o callback do EIF.
 ./scripts/notify_h2_server.sh
@@ -154,11 +155,19 @@ curl -sS -X POST http://172.22.0.44:8088/samples/traffic \
 curl --http2-prior-knowledge -sS \
   http://172.22.0.43:7777/neif-ee/v1/subscriptions | jq .
 
-# 23) Apagar subscrição antiga por ID.
+# 23) Ver dados persistidos no MongoDB do Collector.
+docker exec mongo mongosh energy_collector --quiet --eval \
+  'print("ue_mappings=" + db.ue_mappings.countDocuments()); print("traffic_samples=" + db.traffic_samples.countDocuments()); print("android_samples=" + db.android_samples.countDocuments())'
+
+# 24) Apagar subscrição antiga por ID.
 curl --http2-prior-knowledge -i -X DELETE \
   http://172.22.0.43:7777/neif-ee/v1/subscriptions/1
 
-# 24) Teste de robustez: Collector offline/online.
+# 25) Teste de persistência/robustez: Collector restart mantém dados em MongoDB.
+docker restart energy-collector
+until curl -sS http://172.22.0.44:8088/health | jq -e '.storage == "mongodb"' >/dev/null; do sleep 1; done
+
+# 26) Teste de robustez: Collector offline/online.
 docker stop energy-collector
 docker start energy-collector
 until curl -sS http://172.22.0.44:8088/health >/dev/null; do sleep 1; done

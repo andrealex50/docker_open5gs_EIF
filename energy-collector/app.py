@@ -4,6 +4,13 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+try:
+    from pymongo import MongoClient
+    from pymongo.errors import PyMongoError
+except ImportError:  # pragma: no cover - local fallback if pymongo is missing.
+    MongoClient = None
+    PyMongoError = Exception
+
 
 app = FastAPI(title="Energy Collector / NWDAF-lite")
 
@@ -44,6 +51,64 @@ class AndroidEnergySample(BaseModel):
 ue_mappings: dict[str, UeMapping] = {}
 traffic_samples: list[TrafficSample] = []
 android_samples: list[AndroidEnergySample] = []
+mongo_client = None
+mongo_db = None
+mongo_connect_failed = False
+
+
+def model_to_dict(model: BaseModel) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+
+    return model.dict()
+
+
+def mongo_uri() -> str:
+    return os.getenv(
+        "ENERGY_COLLECTOR_MONGO_URI",
+        f"mongodb://{os.getenv('MONGO_IP', 'mongo')}:27017",
+    )
+
+
+def mongo_db_name() -> str:
+    return os.getenv("ENERGY_COLLECTOR_MONGO_DB", "energy_collector")
+
+
+def mongo_enabled() -> bool:
+    return os.getenv("ENERGY_COLLECTOR_STORAGE", "mongo").lower() != "memory"
+
+
+def get_mongo_db():
+    global mongo_client, mongo_db, mongo_connect_failed
+
+    if not mongo_enabled() or MongoClient is None:
+        return None
+
+    if mongo_db is not None:
+        return mongo_db
+
+    try:
+        mongo_client = MongoClient(mongo_uri(), serverSelectionTimeoutMS=1000)
+        mongo_client.admin.command("ping")
+        mongo_db = mongo_client[mongo_db_name()]
+        mongo_db.ue_mappings.create_index("supi", unique=True)
+        mongo_db.ue_mappings.create_index("ue_ip")
+        mongo_db.traffic_samples.create_index([("supi", 1), ("timestamp", 1)])
+        mongo_db.android_samples.create_index([("supi", 1), ("timestamp", 1)])
+        mongo_connect_failed = False
+        print(f"Energy Collector storage: MongoDB {mongo_uri()}/{mongo_db_name()}")
+    except PyMongoError as exc:
+        mongo_client = None
+        mongo_db = None
+        if not mongo_connect_failed:
+            print(f"Energy Collector storage: memory fallback ({exc})")
+            mongo_connect_failed = True
+
+    return mongo_db
+
+
+def storage_backend() -> str:
+    return "mongodb" if get_mongo_db() is not None else "memory"
 
 
 def utc_now() -> str:
@@ -83,6 +148,11 @@ def estimate_energy_joules(tx_bytes: int, rx_bytes: int, duration_s: float) -> f
 
 
 def find_supi_by_ue_ip(ue_ip: str) -> str | None:
+    db = get_mongo_db()
+    if db is not None:
+        mapping = db.ue_mappings.find_one({"ue_ip": ue_ip}, {"_id": 0})
+        return mapping["supi"] if mapping else None
+
     for supi, mapping in ue_mappings.items():
         if mapping.ue_ip == ue_ip:
             return supi
@@ -91,6 +161,11 @@ def find_supi_by_ue_ip(ue_ip: str) -> str | None:
 
 
 def find_ue_ip_by_supi(supi: str) -> str | None:
+    db = get_mongo_db()
+    if db is not None:
+        mapping = db.ue_mappings.find_one({"supi": supi}, {"_id": 0})
+        return mapping["ue_ip"] if mapping else None
+
     mapping = ue_mappings.get(supi)
 
     if mapping is None:
@@ -144,7 +219,7 @@ def add_optional_filters(
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "storage": storage_backend()}
 
 
 @app.post("/ue-mappings", status_code=201)
@@ -160,22 +235,42 @@ def upsert_ue_mapping(mapping: UeMapping):
     if mapping.timestamp is None:
         mapping.timestamp = utc_now()
 
-    ue_mappings[mapping.supi] = mapping
+    db = get_mongo_db()
+    if db is not None:
+        document = model_to_dict(mapping)
+        db.ue_mappings.replace_one({"supi": mapping.supi}, document, upsert=True)
+        total_mappings = db.ue_mappings.count_documents({})
+    else:
+        ue_mappings[mapping.supi] = mapping
+        total_mappings = len(ue_mappings)
 
     return {
         "status": "stored",
         "mapping": mapping,
-        "total_mappings": len(ue_mappings),
+        "storage": storage_backend(),
+        "total_mappings": total_mappings,
     }
 
 
 @app.get("/ue-mappings")
 def get_ue_mappings():
+    db = get_mongo_db()
+    if db is not None:
+        return list(db.ue_mappings.find({}, {"_id": 0}))
+
     return list(ue_mappings.values())
 
 
 @app.get("/ue-mappings/{supi}")
 def get_ue_mapping(supi: str):
+    db = get_mongo_db()
+    if db is not None:
+        mapping = db.ue_mappings.find_one({"supi": supi}, {"_id": 0})
+        if mapping is None:
+            raise HTTPException(status_code=404, detail="mapping not found")
+
+        return mapping
+
     mapping = ue_mappings.get(supi)
 
     if mapping is None:
@@ -203,13 +298,20 @@ def add_traffic_sample(sample: TrafficSample):
             detail="supi is required, or ue_ip must be mapped first via /ue-mappings",
         )
 
-    traffic_samples.append(sample)
+    db = get_mongo_db()
+    if db is not None:
+        db.traffic_samples.insert_one(model_to_dict(sample))
+        total_samples = db.traffic_samples.count_documents({})
+    else:
+        traffic_samples.append(sample)
+        total_samples = len(traffic_samples)
 
     return {
         "status": "stored",
         "source": sample.source,
         "sample": sample,
-        "total_samples": len(traffic_samples),
+        "storage": storage_backend(),
+        "total_samples": total_samples,
     }
 
 
@@ -223,13 +325,20 @@ def add_android_sample(sample: AndroidEnergySample):
     if sample.energy_joules is not None and sample.energy_joules < 0:
         raise HTTPException(status_code=400, detail="energy_joules must be >= 0")
 
-    android_samples.append(sample)
+    db = get_mongo_db()
+    if db is not None:
+        db.android_samples.insert_one(model_to_dict(sample))
+        total_samples = db.android_samples.count_documents({})
+    else:
+        android_samples.append(sample)
+        total_samples = len(android_samples)
 
     return {
         "status": "stored",
         "source": "android",
         "sample": sample,
-        "total_samples": len(android_samples),
+        "storage": storage_backend(),
+        "total_samples": total_samples,
     }
 
 
@@ -254,6 +363,73 @@ def get_energy_report(
 
     if end_dt <= start_dt:
         raise HTTPException(status_code=400, detail="end must be after start")
+
+    db = get_mongo_db()
+    if db is not None:
+        if not has_scope_filter:
+            android_query = {
+                "supi": supi,
+                "timestamp": {"$gte": start, "$lte": end},
+                "energy_joules": {"$ne": None},
+            }
+            selected_android = list(db.android_samples.find(android_query, {"_id": 0}))
+
+            if selected_android:
+                energy = sum(sample["energy_joules"] for sample in selected_android)
+
+                return add_optional_filters({
+                    "supi": supi,
+                    "event": event,
+                    "start": start,
+                    "end": end,
+                    "source": "android",
+                    "storage": "mongodb",
+                    "energyInfo": {
+                        "energy": round(energy, 6)
+                    },
+                }, pduSessionId, dnn, snssai, appId, flowDescs)
+
+        traffic_query = {
+            "supi": supi,
+            "timestamp": {"$gte": start, "$lte": end},
+        }
+
+        if pduSessionId is not None:
+            traffic_query["pduSessionId"] = pduSessionId
+
+        if dnn is not None:
+            traffic_query["dnn"] = dnn
+
+        if snssai is not None:
+            traffic_query["snssai"] = snssai
+
+        if appId is not None:
+            traffic_query["appId"] = appId
+
+        if flowDescs:
+            traffic_query["flowDescs"] = {"$all": flowDescs}
+
+        selected_traffic = list(db.traffic_samples.find(traffic_query, {"_id": 0}))
+        tx_total = sum(sample["tx_bytes"] for sample in selected_traffic)
+        rx_total = sum(sample["rx_bytes"] for sample in selected_traffic)
+        duration_s = (end_dt - start_dt).total_seconds()
+
+        energy = estimate_energy_joules(tx_total, rx_total, duration_s)
+
+        return add_optional_filters({
+            "supi": supi,
+            "event": event,
+            "start": start,
+            "end": end,
+            "source": "traffic-estimator",
+            "storage": "mongodb",
+            "txBytes": tx_total,
+            "rxBytes": rx_total,
+            "durationSec": duration_s,
+            "energyInfo": {
+                "energy": round(energy, 6)
+            },
+        }, pduSessionId, dnn, snssai, appId, flowDescs)
 
     selected_android = []
 

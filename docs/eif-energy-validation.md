@@ -271,7 +271,7 @@ curl -sS -X POST http://localhost:8088/samples/traffic \
 - Collector query happens in the notification timer path.
 - Notification delivery is direct to `notifUri` for lab mode, bypassing SCP.
 - Only the validated `UE_ENERGY` path has been exercised end to end.
-- The current in-memory Collector sample store is suitable for lab validation, not persistence.
+- The Collector now persists mappings and samples in MongoDB when available, with memory fallback for lab resilience.
 
 ## Next Steps
 
