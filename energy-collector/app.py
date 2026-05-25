@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 
@@ -21,6 +21,11 @@ class TrafficSample(BaseModel):
     supi: str | None = None
     ue_ip: str | None = None
     timestamp: str | None = None
+    pduSessionId: str | None = None
+    dnn: str | None = None
+    snssai: str | None = None
+    appId: str | None = None
+    flowDescs: list[str] | None = None
     tx_bytes: int = Field(ge=0)
     rx_bytes: int = Field(ge=0)
     source: str = "manual"
@@ -92,6 +97,49 @@ def find_ue_ip_by_supi(supi: str) -> str | None:
         return None
 
     return mapping.ue_ip
+
+
+def matches_optional_filter(sample_value: str | None, query_value: str | None) -> bool:
+    if query_value is None:
+        return True
+
+    return sample_value == query_value
+
+
+def matches_optional_list_filter(sample_values: list[str] | None, query_values: list[str] | None) -> bool:
+    if not query_values:
+        return True
+
+    if not sample_values:
+        return False
+
+    return all(value in sample_values for value in query_values)
+
+
+def add_optional_filters(
+    response: dict,
+    pdu_session_id: str | None,
+    dnn: str | None,
+    snssai: str | None,
+    app_id: str | None,
+    flow_descs: list[str] | None,
+) -> dict:
+    if pdu_session_id is not None:
+        response["pduSessionId"] = pdu_session_id
+
+    if dnn is not None:
+        response["dnn"] = dnn
+
+    if snssai is not None:
+        response["snssai"] = snssai
+
+    if app_id is not None:
+        response["appId"] = app_id
+
+    if flow_descs:
+        response["flowDescs"] = flow_descs
+
+    return response
 
 
 @app.get("/health")
@@ -194,28 +242,35 @@ def get_energy_report(
     pduSessionId: str | None = None,
     dnn: str | None = None,
     snssai: str | None = None,
+    appId: str | None = None,
+    flowDescs: list[str] | None = Query(default=None),
 ):
     start_dt = parse_time(start)
     end_dt = parse_time(end)
+    has_scope_filter = (
+        pduSessionId is not None or dnn is not None or snssai is not None or
+        appId is not None or bool(flowDescs)
+    )
 
     if end_dt <= start_dt:
         raise HTTPException(status_code=400, detail="end must be after start")
 
     selected_android = []
 
-    for sample in android_samples:
-        if sample.supi != supi:
-            continue
+    if not has_scope_filter:
+        for sample in android_samples:
+            if sample.supi != supi:
+                continue
 
-        sample_time = parse_time(sample.timestamp)
+            sample_time = parse_time(sample.timestamp)
 
-        if start_dt <= sample_time <= end_dt and sample.energy_joules is not None:
-            selected_android.append(sample)
+            if start_dt <= sample_time <= end_dt and sample.energy_joules is not None:
+                selected_android.append(sample)
 
     if selected_android:
         energy = sum(sample.energy_joules for sample in selected_android)
 
-        return {
+        return add_optional_filters({
             "supi": supi,
             "event": event,
             "start": start,
@@ -224,12 +279,27 @@ def get_energy_report(
             "energyInfo": {
                 "energy": round(energy, 6)
             },
-        }
+        }, pduSessionId, dnn, snssai, appId, flowDescs)
 
     selected_traffic = []
 
     for sample in traffic_samples:
         if sample.supi != supi:
+            continue
+
+        if not matches_optional_filter(sample.pduSessionId, pduSessionId):
+            continue
+
+        if not matches_optional_filter(sample.dnn, dnn):
+            continue
+
+        if not matches_optional_filter(sample.snssai, snssai):
+            continue
+
+        if not matches_optional_filter(sample.appId, appId):
+            continue
+
+        if not matches_optional_list_filter(sample.flowDescs, flowDescs):
             continue
 
         sample_time = parse_time(sample.timestamp)
@@ -243,7 +313,7 @@ def get_energy_report(
 
     energy = estimate_energy_joules(tx_total, rx_total, duration_s)
 
-    return {
+    return add_optional_filters({
         "supi": supi,
         "event": event,
         "start": start,
@@ -255,4 +325,4 @@ def get_energy_report(
         "energyInfo": {
             "energy": round(energy, 6)
         },
-    }
+    }, pduSessionId, dnn, snssai, appId, flowDescs)

@@ -157,6 +157,42 @@ python3 scripts/upf_traffic_estimator.py \
   --post
 ```
 
+Tag the sample with PDU/DNN/S-NSSAI scope when testing scoped energy events:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --source ue-iptables \
+  --register-mapping \
+  --post \
+  --pdu-session-id 1 \
+  --dnn internet \
+  --snssai 1-000001
+```
+
+Tag the sample with DNN/S-NSSAI plus an application/service identifier when testing `SERVICE_FLOW_ENERGY`:
+
+```bash
+python3 scripts/upf_traffic_estimator.py \
+  --source ue-iptables \
+  --register-mapping \
+  --post \
+  --dnn internet \
+  --snssai 1-000001 \
+  --app-id demo-service
+```
+
+The Collector can then filter `/energy/v1/report` by the same optional query parameters:
+
+```bash
+curl "http://172.22.0.44:8088/energy/v1/report?supi=imsi-001011234567895&event=UE_SNSSAI_ENERGY&start=<start>&end=<end>&dnn=internet&snssai=1-000001"
+```
+
+For service flow energy:
+
+```bash
+curl "http://172.22.0.44:8088/energy/v1/report?supi=imsi-001011234567895&event=SERVICE_FLOW_ENERGY&start=<start>&end=<end>&dnn=internet&snssai=1-000001&appId=demo-service"
+```
+
 Override endpoints if needed:
 
 ```bash
@@ -199,6 +235,7 @@ with a value greater than zero when traffic deltas are observed.
 - In `auto`, `prometheus` and `interface` modes, attribution to a SUPI depends on the supplied `--supi` and `--ue-ip`.
 - The `ogstun` interface fallback is global to the UPF interface.
 - The `ue-iptables` mode narrows accounting to the configured UE IP, but still depends on a trusted `ue_ip -> supi` mapping.
+- `dnn`, `snssai`, `pduSessionId`, `appId` and `flowDescs` are lab tags supplied by the estimator/user; they are not discovered from real PFCP/session state yet.
 - The `ue-iptables` mode requires the UPF container to have `iptables`, `iptables-save` and permission to insert/remove temporary rules.
 - Packet-to-byte fallback is approximate.
 - Counter resets are handled by clamping negative deltas to zero.

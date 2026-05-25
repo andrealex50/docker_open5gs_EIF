@@ -340,7 +340,7 @@ def build_iptables_sample(counters, end_metrics, args, start_ts, end_ts):
 
 
 def collector_traffic_payload(sample):
-    return {
+    payload = {
         "supi": sample["supi"],
         "ue_ip": sample["ue_ip"],
         "timestamp": sample["timestamp"],
@@ -348,6 +348,31 @@ def collector_traffic_payload(sample):
         "rx_bytes": sample["rx_bytes"],
         "source": sample["source"],
     }
+
+    for field in ("pduSessionId", "dnn", "snssai", "appId", "flowDescs"):
+        if sample.get(field):
+            payload[field] = sample[field]
+
+    return payload
+
+
+def add_scope_fields(sample, args):
+    if args.pdu_session_id:
+        sample["pduSessionId"] = args.pdu_session_id
+
+    if args.dnn:
+        sample["dnn"] = args.dnn
+
+    if args.snssai:
+        sample["snssai"] = args.snssai
+
+    if args.app_id:
+        sample["appId"] = args.app_id
+
+    if args.flow_descs:
+        sample["flowDescs"] = args.flow_descs
+
+    return sample
 
 
 def register_mapping(args):
@@ -388,6 +413,11 @@ def main():
     )
     parser.add_argument("--upf-container", default=UPF_CONTAINER_DEFAULT)
     parser.add_argument("--upf-interface", default=UPF_INTERFACE_DEFAULT)
+    parser.add_argument("--pdu-session-id")
+    parser.add_argument("--dnn")
+    parser.add_argument("--snssai")
+    parser.add_argument("--app-id")
+    parser.add_argument("--flow-desc", dest="flow_descs", action="append")
     parser.add_argument("--register-mapping", action="store_true")
     parser.add_argument("--post", action="store_true")
     args = parser.parse_args()
@@ -422,6 +452,7 @@ def main():
         finally:
             cleanup_iptables_counters(args, counters)
 
+        add_scope_fields(sample, args)
         emit_sample(sample, args)
         return
 
@@ -476,6 +507,7 @@ def main():
             end_ts,
         )
 
+    add_scope_fields(sample, args)
     emit_sample(sample, args)
 
 
