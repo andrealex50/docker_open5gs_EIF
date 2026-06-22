@@ -1,2 +1,0 @@
-delay_start 1778850312047
-measure_start 1778850322070

@@ -1,1 +1,0 @@
-/sys/class/power_supply/battery/current_now
