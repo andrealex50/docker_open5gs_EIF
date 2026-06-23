@@ -16,17 +16,22 @@ Quite contrary to the name of the repository, this repository contains docker fi
   - https://gitea.osmocom.org/ims-volte-vowifi/strongswan-epdg
 - SWu-IKEv2 - https://github.com/fasferraz/SWu-IKEv2
 
-## EIF Lab Notes
+## EIF extensions
 
-The EIF-specific work in this fork is documented here:
+This fork includes EIF energy exposure extensions for Open5GS, including:
 
-- [EIF energy validation](docs/eif-energy-validation.md): validated EIF -> Energy Collector -> `EnergyEeReport` -> h2c callback path.
-- [EIF 3GPP message compliance](docs/eif-3gpp-message-compliance.md): schema matrix for `EnergyEeSubsc`, `EnergyEeNotif`, `EnergyEeReport` and `EnergyInfo`.
-- [Manual EIF test commands](docs/eif-energy-test-commands.md): rebuild, restart, subscription, notify server and fallback checks.
-- [UPF traffic estimator](docs/eif-upf-traffic-estimator.md): how `scripts/upf_traffic_estimator.py` feeds `/samples/traffic`.
-- [UPF technical status](docs/eif-upf-technical-status.md): current validated UPF lab flow and remaining production risks.
-- [Android radio estimator](docs/eif-android-radio-estimator.md): Android-side estimator model.
-- [Android validation](docs/eif-android-validation.md): previous Android end-to-end validation evidence.
+- EIF support for energy event exposure subscriptions.
+- Integration with an external Energy Collector.
+- HTTP/2 h2c notification delivery to the subscribed `notifUri`.
+- UPF/traffic-based energy sample collection and MongoDB-backed Collector persistence.
+
+## Acknowledgements
+
+EIF-related extensions in this fork were developed at [Instituto de Telecomunicacoes](https://www.it.pt/)
+in the context of the EXIGENCE project, funded by the European Union's Horizon
+Europe research and innovation programme under grant agreement No. 101139120.
+
+Copyright (c) 2026 Instituto de Telecomunicacoes and contributors.
 
 ## Table of Contents
 
