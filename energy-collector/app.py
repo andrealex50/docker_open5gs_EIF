@@ -1,5 +1,9 @@
 import os
+import json
+import math
 from datetime import datetime, timezone
+from urllib import parse, request
+from urllib.error import URLError
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -51,6 +55,8 @@ class AndroidEnergySample(BaseModel):
 ue_mappings: dict[str, UeMapping] = {}
 traffic_samples: list[TrafficSample] = []
 android_samples: list[AndroidEnergySample] = []
+energy_source_samples: list[dict] = []
+energy_attributions: list[dict] = []
 mongo_client = None
 mongo_db = None
 mongo_connect_failed = False
@@ -95,6 +101,9 @@ def get_mongo_db():
         mongo_db.ue_mappings.create_index("ue_ip")
         mongo_db.traffic_samples.create_index([("supi", 1), ("timestamp", 1)])
         mongo_db.android_samples.create_index([("supi", 1), ("timestamp", 1)])
+        mongo_db.energy_source_samples.create_index([("source", 1), ("window_start", 1), ("window_end", 1)])
+        mongo_db.energy_attributions.create_index([("supi", 1), ("event", 1), ("timestamp", 1)])
+        mongo_db.energy_attributions.create_index([("source", 1), ("timestamp", 1)])
         mongo_connect_failed = False
         print(f"Energy Collector storage: MongoDB {mongo_uri()}/{mongo_db_name()}")
     except PyMongoError as exc:
@@ -109,6 +118,26 @@ def get_mongo_db():
 
 def storage_backend() -> str:
     return "mongodb" if get_mongo_db() is not None else "memory"
+
+
+def energy_source_mode() -> str:
+    return os.getenv("ENERGY_SOURCE", "traffic").lower()
+
+
+def prometheus_url() -> str | None:
+    value = os.getenv("PROMETHEUS_URL")
+    return value.rstrip("/") if value else None
+
+
+def scaphandre_promql_template() -> str:
+    return os.getenv(
+        "SCAPHANDRE_PROMQL_TEMPLATE",
+        "sum(increase(scaph_domain_energy_microjoules[{window}])) / 1000000",
+    )
+
+
+def prometheus_timeout_s() -> float:
+    return env_float("PROMETHEUS_TIMEOUT_S", 2.0)
 
 
 def utc_now() -> str:
@@ -145,6 +174,160 @@ def estimate_energy_joules(tx_bytes: int, rx_bytes: int, duration_s: float) -> f
     alpha_rx = env_float("ENERGY_ALPHA_RX_J_PER_BYTE", 0.0000004)
 
     return idle_power_w * duration_s + alpha_tx * tx_bytes + alpha_rx * rx_bytes
+
+
+def promql_window(duration_s: float) -> str:
+    seconds = max(1, int(math.ceil(duration_s)))
+    return f"{seconds}s"
+
+
+def extract_prometheus_value(payload: dict) -> float | None:
+    if payload.get("status") != "success":
+        return None
+
+    result = payload.get("data", {}).get("result", [])
+    if not result:
+        return None
+
+    total = 0.0
+    found = False
+
+    for item in result:
+        value = item.get("value")
+        if not value or len(value) < 2:
+            continue
+
+        try:
+            total += float(value[1])
+            found = True
+        except (TypeError, ValueError):
+            continue
+
+    return total if found else None
+
+
+def query_prometheus_energy(start: datetime, end: datetime) -> dict | None:
+    if energy_source_mode() not in {"prometheus", "scaphandre", "scaphandre_prometheus"}:
+        return None
+
+    base_url = prometheus_url()
+    if not base_url:
+        return None
+
+    duration_s = (end - start).total_seconds()
+    query = scaphandre_promql_template().replace("{window}", promql_window(duration_s))
+    params = parse.urlencode({
+        "query": query,
+        "time": str(end.timestamp()),
+    })
+    url = f"{base_url}/api/v1/query?{params}"
+
+    try:
+        with request.urlopen(url, timeout=prometheus_timeout_s()) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f"Energy source query failed: {exc}")
+        return None
+
+    value = extract_prometheus_value(payload)
+    if value is None or value < 0:
+        return None
+
+    return {
+        "source": "scaphandre_prometheus",
+        "metric": "cpu_package_energy",
+        "unit": "joules",
+        "window_start": start.isoformat().replace("+00:00", "Z"),
+        "window_end": end.isoformat().replace("+00:00", "Z"),
+        "value": round(value, 6),
+        "metadata": {
+            "prometheus_url": base_url,
+            "promql": query,
+        },
+    }
+
+
+def store_energy_source_sample(sample: dict) -> None:
+    db = get_mongo_db()
+    if db is not None:
+        db.energy_source_samples.insert_one(sample.copy())
+    else:
+        energy_source_samples.append(sample)
+
+
+def store_energy_attribution(response: dict) -> None:
+    attribution = response.get("attribution")
+    energy_source = response.get("energySource")
+
+    if attribution is None or energy_source is None:
+        return
+
+    document = {
+        "timestamp": utc_now(),
+        "supi": response.get("supi"),
+        "event": response.get("event"),
+        "start": response.get("start"),
+        "end": response.get("end"),
+        "source": response.get("source"),
+        "energy": response.get("energyInfo", {}).get("energy"),
+        "txBytes": response.get("txBytes", 0),
+        "rxBytes": response.get("rxBytes", 0),
+        "attribution": attribution,
+        "energySource": energy_source,
+    }
+
+    for key in ("pduSessionId", "dnn", "snssai", "appId", "flowDescs"):
+        if key in response:
+            document[key] = response[key]
+
+    db = get_mongo_db()
+    if db is not None:
+        db.energy_attributions.insert_one(document)
+    else:
+        energy_attributions.append(document)
+
+
+def query_and_store_energy_source(start: datetime, end: datetime) -> dict | None:
+    sample = query_prometheus_energy(start, end)
+
+    if sample is not None:
+        store_energy_source_sample(sample)
+
+    return sample
+
+
+def traffic_bytes(samples: list[dict]) -> tuple[int, int, int]:
+    tx_total = sum(sample.get("tx_bytes", 0) for sample in samples)
+    rx_total = sum(sample.get("rx_bytes", 0) for sample in samples)
+    return tx_total, rx_total, tx_total + rx_total
+
+
+def attributed_energy_response(
+    response: dict,
+    energy_source_sample: dict | None,
+    selected_bytes: int,
+    total_bytes: int,
+) -> dict:
+    if energy_source_sample is None or selected_bytes <= 0 or total_bytes <= 0:
+        return response
+
+    ratio = min(1.0, selected_bytes / total_bytes)
+    measured_energy = energy_source_sample["value"]
+    traffic_estimate_energy = response["energyInfo"]["energy"]
+    response["source"] = energy_source_sample["source"]
+    response["energyInfo"]["energy"] = round(measured_energy * ratio, 6)
+    response["trafficEstimateEnergy"] = traffic_estimate_energy
+    response["energySource"] = energy_source_sample
+    response["attribution"] = {
+        "method": "traffic_share",
+        "selectedBytes": selected_bytes,
+        "totalTrackedBytes": total_bytes,
+        "ratio": round(ratio, 6),
+        "measuredWindowEnergy": measured_energy,
+        "trafficEstimateEnergy": traffic_estimate_energy,
+    }
+    store_energy_attribution(response)
+    return response
 
 
 def find_supi_by_ue_ip(ue_ip: str) -> str | None:
@@ -220,6 +403,58 @@ def add_optional_filters(
 @app.get("/health")
 def health():
     return {"status": "ok", "storage": storage_backend()}
+
+
+@app.get("/energy-sources/status")
+def get_energy_source_status():
+    mode = energy_source_mode()
+    url = prometheus_url()
+
+    return {
+        "mode": mode,
+        "enabled": mode in {"prometheus", "scaphandre", "scaphandre_prometheus"} and url is not None,
+        "prometheusUrl": url,
+        "promqlTemplate": scaphandre_promql_template(),
+        "timeoutSec": prometheus_timeout_s(),
+        "storage": storage_backend(),
+    }
+
+
+@app.get("/energy-sources/window")
+def get_energy_source_window(start: str, end: str):
+    start_dt = parse_time(start)
+    end_dt = parse_time(end)
+
+    if end_dt <= start_dt:
+        raise HTTPException(status_code=400, detail="end must be after start")
+
+    sample = query_and_store_energy_source(start_dt, end_dt)
+
+    if sample is None:
+        return {
+            "status": "unavailable",
+            "reason": "energy source disabled or no Prometheus value returned",
+            "energySource": get_energy_source_status(),
+        }
+
+    return {
+        "status": "ok",
+        "sample": sample,
+        "storage": storage_backend(),
+    }
+
+
+@app.get("/energy-sources/attributions")
+def get_energy_attributions(limit: int = Query(default=10, ge=1, le=100)):
+    db = get_mongo_db()
+    if db is not None:
+        return list(
+            db.energy_attributions.find({}, {"_id": 0})
+            .sort("timestamp", -1)
+            .limit(limit)
+        )
+
+    return list(reversed(energy_attributions[-limit:]))
 
 
 @app.post("/ue-mappings", status_code=201)
@@ -410,13 +645,11 @@ def get_energy_report(
             traffic_query["flowDescs"] = {"$all": flowDescs}
 
         selected_traffic = list(db.traffic_samples.find(traffic_query, {"_id": 0}))
-        tx_total = sum(sample["tx_bytes"] for sample in selected_traffic)
-        rx_total = sum(sample["rx_bytes"] for sample in selected_traffic)
+        tx_total, rx_total, selected_total_bytes = traffic_bytes(selected_traffic)
         duration_s = (end_dt - start_dt).total_seconds()
 
         energy = estimate_energy_joules(tx_total, rx_total, duration_s)
-
-        return add_optional_filters({
+        response = add_optional_filters({
             "supi": supi,
             "event": event,
             "start": start,
@@ -430,6 +663,20 @@ def get_energy_report(
                 "energy": round(energy, 6)
             },
         }, pduSessionId, dnn, snssai, appId, flowDescs)
+
+        total_traffic_query = {
+            "timestamp": {"$gte": start, "$lte": end},
+        }
+        all_traffic = list(db.traffic_samples.find(total_traffic_query, {"_id": 0}))
+        _, _, total_tracked_bytes = traffic_bytes(all_traffic)
+        energy_source_sample = query_and_store_energy_source(start_dt, end_dt)
+
+        return attributed_energy_response(
+            response,
+            energy_source_sample,
+            selected_total_bytes,
+            total_tracked_bytes,
+        )
 
     selected_android = []
 
@@ -485,11 +732,11 @@ def get_energy_report(
 
     tx_total = sum(sample.tx_bytes for sample in selected_traffic)
     rx_total = sum(sample.rx_bytes for sample in selected_traffic)
+    selected_total_bytes = tx_total + rx_total
     duration_s = (end_dt - start_dt).total_seconds()
 
     energy = estimate_energy_joules(tx_total, rx_total, duration_s)
-
-    return add_optional_filters({
+    response = add_optional_filters({
         "supi": supi,
         "event": event,
         "start": start,
@@ -502,3 +749,22 @@ def get_energy_report(
             "energy": round(energy, 6)
         },
     }, pduSessionId, dnn, snssai, appId, flowDescs)
+
+    all_traffic_in_window = []
+    for sample in traffic_samples:
+        sample_time = parse_time(sample.timestamp)
+
+        if start_dt <= sample_time <= end_dt:
+            all_traffic_in_window.append(sample)
+
+    total_tracked_bytes = sum(
+        sample.tx_bytes + sample.rx_bytes for sample in all_traffic_in_window
+    )
+    energy_source_sample = query_and_store_energy_source(start_dt, end_dt)
+
+    return attributed_energy_response(
+        response,
+        energy_source_sample,
+        selected_total_bytes,
+        total_tracked_bytes,
+    )

@@ -317,6 +317,9 @@ services:
       - ENERGY_COLLECTOR_PORT=${ENERGY_COLLECTOR_PORT}
       - ENERGY_COLLECTOR_MONGO_URI=mongodb://${MONGO_IP}:27017
       - ENERGY_COLLECTOR_MONGO_DB=energy_collector
+      - ENERGY_SOURCE=${ENERGY_SOURCE:-traffic}
+      - PROMETHEUS_URL=${PROMETHEUS_URL:-}
+      - PROMETHEUS_TIMEOUT_S=${PROMETHEUS_TIMEOUT_S:-2}
     volumes:
       - ./energy-collector:/app
       - energy_collector_data:/data
