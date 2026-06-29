@@ -13,7 +13,8 @@ SOURCE=${SOURCE:-manual}
 APP_ID=${APP_ID:-validation-flow}
 FLOW_DESC=${FLOW_DESC:-permit out ip from any to assigned}
 START=${START:-$(date -u -d '2 minutes ago' +%Y-%m-%dT%H:%M:%SZ)}
-END=${END:-$(date -u -d '2 minutes' +%Y-%m-%dT%H:%M:%SZ)}
+END=${END:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+SAMPLE_TIMESTAMP=${SAMPLE_TIMESTAMP:-${END}}
 CREATE_EIF_SUBSCRIPTION=${CREATE_EIF_SUBSCRIPTION:-false}
 
 pretty_json() {
@@ -52,6 +53,7 @@ curl -sS -X POST "${COLLECTOR_URL}/samples/traffic" \
   -d "{
     \"supi\": \"${SUPI}\",
     \"ue_ip\": \"${UE_IP}\",
+    \"timestamp\": \"${SAMPLE_TIMESTAMP}\",
     \"tx_bytes\": ${TX_BYTES},
     \"rx_bytes\": ${RX_BYTES},
     \"source\": \"${SOURCE}\",

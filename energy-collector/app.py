@@ -132,7 +132,7 @@ def prometheus_url() -> str | None:
 def scaphandre_promql_template() -> str:
     return os.getenv(
         "SCAPHANDRE_PROMQL_TEMPLATE",
-        "sum(increase(scaph_domain_energy_microjoules[{window}])) / 1000000",
+        "increase(scaph_host_energy_microjoules[{window}]) / 1000000",
     )
 
 
@@ -235,7 +235,7 @@ def query_prometheus_energy(start: datetime, end: datetime) -> dict | None:
 
     return {
         "source": "scaphandre_prometheus",
-        "metric": "cpu_package_energy",
+        "metric": "host_rapl_energy",
         "unit": "joules",
         "window_start": start.isoformat().replace("+00:00", "Z"),
         "window_end": end.isoformat().replace("+00:00", "Z"),

@@ -111,14 +111,14 @@ Normalized energy-source schema:
 ```json
 {
   "source": "scaphandre",
-  "metric": "cpu_package_energy",
+  "metric": "host_rapl_energy",
   "unit": "joules",
   "window_start": "...",
   "window_end": "...",
   "value": 12.34,
   "metadata": {
     "host": "server1",
-    "promql": "increase(scaph_domain_energy_microjoules[30s]) / 1000000"
+    "promql": "increase(scaph_host_energy_microjoules[30s]) / 1000000"
   }
 }
 ```
@@ -142,7 +142,7 @@ Check metrics:
 
 ```bash
 curl -sS http://localhost:8080/metrics | grep -i scaph | head
-curl -sS http://localhost:8080/metrics | grep -E 'scaph_.*energy|scaph_domain_energy_microjoules' | head
+curl -sS http://localhost:8080/metrics | grep -E 'scaph_.*energy|scaph_host_energy_microjoules' | head
 ```
 
 Run this on `server1` and `server2`:
@@ -156,7 +156,7 @@ docker run -d \
   -v /sys/class/powercap:/sys/class/powercap:ro \
   -p 8080:8080 \
   hubblo/scaphandre prometheus
-curl -sS http://localhost:8080/metrics | grep -E 'scaph_.*energy|scaph_domain_energy_microjoules' | head
+curl -sS http://localhost:8080/metrics | grep -E 'scaph_.*energy|scaph_host_energy_microjoules' | head
 
 ssh <user>@10.255.35.34
 docker rm -f scaphandre 2>/dev/null || true
@@ -166,7 +166,7 @@ docker run -d \
   -v /sys/class/powercap:/sys/class/powercap:ro \
   -p 8080:8080 \
   hubblo/scaphandre prometheus
-curl -sS http://localhost:8080/metrics | grep -E 'scaph_.*energy|scaph_domain_energy_microjoules' | head
+curl -sS http://localhost:8080/metrics | grep -E 'scaph_.*energy|scaph_host_energy_microjoules' | head
 ```
 
 ### 2. Prometheus Queries
@@ -174,13 +174,13 @@ curl -sS http://localhost:8080/metrics | grep -E 'scaph_.*energy|scaph_domain_en
 Instantaneous power estimate:
 
 ```promql
-rate(scaph_domain_energy_microjoules[30s]) / 1000000
+rate(scaph_host_energy_microjoules[30s]) / 1000000
 ```
 
 Energy over a window:
 
 ```promql
-increase(scaph_domain_energy_microjoules[1m]) / 1000000
+increase(scaph_host_energy_microjoules[1m]) / 1000000
 ```
 
 Notes:
@@ -206,10 +206,10 @@ Prometheus query checks:
 
 ```bash
 curl -G http://<prometheus-host>:9090/api/v1/query \
-  --data-urlencode 'query=sum(rate(scaph_domain_energy_microjoules[30s])) / 1000000' | jq .
+  --data-urlencode 'query=rate(scaph_host_energy_microjoules[30s]) / 1000000' | jq .
 
 curl -G http://<prometheus-host>:9090/api/v1/query \
-  --data-urlencode 'query=sum(increase(scaph_domain_energy_microjoules[1m])) / 1000000' | jq .
+  --data-urlencode 'query=increase(scaph_host_energy_microjoules[1m]) / 1000000' | jq .
 ```
 
 ## Energy Collector Changes
@@ -243,7 +243,7 @@ Minimal implementation path:
 2. Add environment variables:
    - `ENERGY_SOURCE=scaphandre_prometheus`
    - `PROMETHEUS_URL=http://<host>:9090`
-   - `SCAPHANDRE_PROMQL_TEMPLATE=sum(increase(scaph_domain_energy_microjoules[{window}])) / 1000000`
+   - `SCAPHANDRE_PROMQL_TEMPLATE=increase(scaph_host_energy_microjoules[{window}]) / 1000000`
 3. Query Prometheus for the report window.
 4. Normalize the returned value to joules.
 5. Combine it with UPF attribution.
@@ -264,7 +264,7 @@ Collector configuration example:
 ```bash
 ENERGY_SOURCE=scaphandre_prometheus
 PROMETHEUS_URL=http://<prometheus-host>:9090
-SCAPHANDRE_PROMQL_TEMPLATE='sum(increase(scaph_domain_energy_microjoules[{window}])) / 1000000'
+SCAPHANDRE_PROMQL_TEMPLATE='increase(scaph_host_energy_microjoules[{window}]) / 1000000'
 PROMETHEUS_TIMEOUT_S=2
 ```
 
@@ -286,7 +286,7 @@ Expected response when Prometheus is configured:
   "status": "ok",
   "sample": {
     "source": "scaphandre_prometheus",
-    "metric": "cpu_package_energy",
+    "metric": "host_rapl_energy",
     "unit": "joules",
     "window_start": "...",
     "window_end": "...",
@@ -392,14 +392,14 @@ Make traffic-model estimates closer to measured Scaphandre/window energy.
 ### Host Energy Source
 
 ```bash
-curl -sS http://<scaphandre-host>:8080/metrics | grep scaph_domain_energy_microjoules
+curl -sS http://<scaphandre-host>:8080/metrics | grep scaph_host_energy_microjoules
 ```
 
 ### Prometheus
 
 ```bash
 curl -G http://<prometheus-host>:9090/api/v1/query \
-  --data-urlencode 'query=increase(scaph_domain_energy_microjoules[1m]) / 1000000' | jq .
+  --data-urlencode 'query=increase(scaph_host_energy_microjoules[1m]) / 1000000' | jq .
 ```
 
 ### Collector
@@ -491,8 +491,8 @@ lrwxrwxrwx  1 root root 0 Jun 24 15:20 intel-rapl:0:2 -> ../../devices/virtual/p
 - Run Scaphandre.
 - Confirm Prometheus-compatible metrics.
 - Add Prometheus scrape config if needed.
-- Validate `scaph_domain_energy_microjoules` on both servers.
-- Validate `increase(scaph_domain_energy_microjoules[1m]) / 1000000` through Prometheus.
+- Validate `scaph_host_energy_microjoules` on both servers.
+- Validate `increase(scaph_host_energy_microjoules[1m]) / 1000000` through Prometheus.
 
 ### Milestone 3: Collector Energy-Source Abstraction
 
@@ -540,7 +540,7 @@ and adds laboratory/debug metadata:
   "trafficEstimateEnergy": 0.25,
   "energySource": {
     "source": "scaphandre_prometheus",
-    "metric": "cpu_package_energy",
+    "metric": "host_rapl_energy",
     "unit": "joules",
     "value": 12.34
   },
@@ -576,7 +576,7 @@ curl -sS http://172.22.0.44:8088/energy-sources/attributions?limit=5 | jq .
 Validation sequence:
 
 1. Confirm Scaphandre exposes energy counters.
-2. Confirm Prometheus can query `increase(scaph_domain_energy_microjoules[1m])`.
+2. Confirm Prometheus can query `increase(scaph_host_energy_microjoules[1m])`.
 3. Start the Collector with:
 
 ```bash
