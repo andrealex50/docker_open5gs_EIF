@@ -30,6 +30,7 @@ export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export IP_ADDR=$(awk 'END{print $1}' /etc/hosts)
 export IF_NAME=$(ip r | awk '/default/ { print $5 }')
+export UPF_SMF_IP=${UPF_SMF_IP:-$SMF_IP}
 
 # use nftables instead of iptables
 update-alternatives --set iptables `which iptables-nft`
@@ -65,7 +66,7 @@ mkdir -p /open5gs-EIF/install/etc/open5gs
 
 cp /mnt/upf/upf.yaml /open5gs-EIF/install/etc/open5gs/upf.yaml
 sed -i 's|UPF_IP|'$UPF_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
-sed -i 's|SMF_IP|'$SMF_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
+sed -i 's|UPF_SMF_IP|'$UPF_SMF_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
 sed -i 's|UE_IPV4_INTERNET_APN_GATEWAY_IP|'$UE_IPV4_INTERNET_APN_GATEWAY_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
 sed -i 's|UE_IPV4_INTERNET_APN_SUBNET|'$UE_IPV4_INTERNET'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml
 sed -i 's|UE_IPV4_IMS_TUN_IP|'$UE_IPV4_IMS_TUN_IP'|g' /open5gs-EIF/install/etc/open5gs/upf.yaml

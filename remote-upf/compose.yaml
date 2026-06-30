@@ -1,0 +1,18 @@
+services:
+  upf:
+    build:
+      context: ../base
+    image: ${OPEN5GS_IMAGE:-docker_open5gs}
+    container_name: upf
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - COMPONENT_NAME=upf
+    volumes:
+      - ../upf:/mnt/upf:ro
+      - ../log:/open5gs/install/var/log/open5gs
+    cap_add:
+      - NET_ADMIN
+    privileged: true
+    restart: unless-stopped

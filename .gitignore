@@ -13,3 +13,6 @@ __pycache__/
 
 android-radio-window/
 energy-collector/.venv/
+
+# Generated experiment artefacts can be large and contain host-specific data.
+results/

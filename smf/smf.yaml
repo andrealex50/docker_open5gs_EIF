@@ -36,7 +36,7 @@ smf:
         - address: SMF_IP
       client:
         upf:
-          - address: UPF_IP
+          - address: SMF_UPF_IP
     session:
       - subnet: UE_IPV4_INTERNET_APN_SUBNET
         gateway: UE_IPV4_INTERNET_APN_GATEWAY_IP

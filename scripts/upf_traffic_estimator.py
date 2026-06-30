@@ -7,6 +7,7 @@ import re
 import subprocess
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib import request
 
 
@@ -388,6 +389,14 @@ def register_mapping(args):
 def emit_sample(sample, args):
     print(json.dumps(sample, indent=2))
 
+    if args.output_json:
+        output_path = Path(args.output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(sample, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     if args.post:
         payload = collector_traffic_payload(sample)
         status, body = post_json(f"{args.collector_url}/samples/traffic", payload, args.timeout)
@@ -418,6 +427,10 @@ def main():
     parser.add_argument("--snssai")
     parser.add_argument("--app-id")
     parser.add_argument("--flow-desc", dest="flow_descs", action="append")
+    parser.add_argument(
+        "--output-json",
+        help="Write the measured traffic sample as JSON to this path",
+    )
     parser.add_argument("--register-mapping", action="store_true")
     parser.add_argument("--post", action="store_true")
     args = parser.parse_args()

@@ -30,6 +30,7 @@ export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export IP_ADDR=$(awk 'END{print $1}' /etc/hosts)
 export IF_NAME=$(ip r | awk '/default/ { print $5 }')
+export SMF_UPF_IP=${SMF_UPF_IP:-$UPF_IP}
 
 [ ${#MNC} == 3 ] && EPC_DOMAIN="epc.mnc${MNC}.mcc${MCC}.3gppnetwork.org" || EPC_DOMAIN="epc.mnc0${MNC}.mcc${MCC}.3gppnetwork.org"
 
@@ -51,7 +52,7 @@ cp /mnt/smf/make_certs.sh /open5gs/install/etc/freeDiameter/make_certs.sh
 sed -i 's|SMF_IP|'$SMF_IP'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml
 sed -i 's|SCP_IP|'$SCP_IP'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml
 sed -i 's|NRF_IP|'$NRF_IP'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml
-sed -i 's|UPF_IP|'$UPF_IP'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml
+sed -i 's|SMF_UPF_IP|'$SMF_UPF_IP'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml
 sed -i 's|SMF_DNS1|'$SMF_DNS1'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml
 sed -i 's|SMF_DNS2|'$SMF_DNS2'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml
 sed -i 's|UE_IPV4_INTERNET_APN_GATEWAY_IP|'$UE_IPV4_INTERNET_APN_GATEWAY_IP'|g' /open5gs-EIF/install/etc/open5gs/smf.yaml

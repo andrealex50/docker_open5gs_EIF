@@ -30,6 +30,9 @@
 #ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 export PROMETHEUS_WORK_DIR=prometheus-$PROMETHEUS_VERSION.linux-$(dpkg --print-architecture)
+export UPF_METRICS_IP=${UPF_METRICS_IP:-$UPF_IP}
+export POWERAPI_HOST=${POWERAPI_HOST:-$SCAPHANDRE_HOST}
+export POWERAPI_PORT=${POWERAPI_PORT:-8010}
 cd $PROMETHEUS_WORK_DIR
 
 mkdir -p /config
@@ -40,10 +43,13 @@ sed -i 's|AMF_IP|'$AMF_IP'|g' /config/prometheus.yml
 sed -i 's|SMF_IP|'$SMF_IP'|g' /config/prometheus.yml
 sed -i 's|MME_IP|'$MME_IP'|g' /config/prometheus.yml
 sed -i 's|PCF_IP|'$PCF_IP'|g' /config/prometheus.yml
-sed -i 's|UPF_IP|'$UPF_IP'|g' /config/prometheus.yml
+sed -i 's|UPF_METRICS_IP|'$UPF_METRICS_IP'|g' /config/prometheus.yml
 sed -i 's|HSS_IP|'$HSS_IP'|g' /config/prometheus.yml
 sed -i 's|PCRF_IP|'$PCRF_IP'|g' /config/prometheus.yml
 sed -i 's|SCAPHANDRE_HOST|'$SCAPHANDRE_HOST'|g' /config/prometheus.yml
 sed -i 's|SCAPHANDRE_PORT|'$SCAPHANDRE_PORT'|g' /config/prometheus.yml
+sed -i 's|EXIGENCE2_HOST|'$EXIGENCE2_HOST'|g' /config/prometheus.yml
+sed -i 's|POWERAPI_HOST|'$POWERAPI_HOST'|g' /config/prometheus.yml
+sed -i 's|POWERAPI_PORT|'$POWERAPI_PORT'|g' /config/prometheus.yml
 
 exec ./prometheus --config.file=/config/prometheus.yml $@

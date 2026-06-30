@@ -1,0 +1,125 @@
+{
+  "campaign": "post-remote-upf",
+  "topology": "UPF isolated on exigence2; core, gNB, UE and iperf3 endpoint on exigence1",
+  "collector_url": "http://172.22.0.44:8088",
+  "prometheus_url": "http://localhost:9090",
+  "upf_metrics_url": "http://10.255.35.34:9091/metrics",
+  "estimator_source": "prometheus",
+  "upf_container": "upf",
+  "upf_interface": "ogstun",
+  "ue_container": "nr_ue",
+  "ue_tunnel": "uesimtun0",
+  "docker_command": ["docker"],
+  "supi": "imsi-001011234567895",
+  "ue_ip": "192.168.100.2",
+  "iperf_server": "10.255.35.93",
+  "window_seconds": 30,
+  "workload_seconds": 25,
+  "metrics_settle_seconds": 2,
+  "initial_cooldown_seconds": 10,
+  "cooldown_seconds": 10,
+  "http_timeout_seconds": 10,
+  "estimator_start_timeout_seconds": 20,
+  "repetitions": 3,
+  "primary_energy_alias": "exigence2",
+  "primary_energy_job": "scaphandre-exigence2",
+  "expected_energy_mode": "scaphandre_prometheus",
+  "expected_attribution_mode": "dynamic_traffic_share",
+  "minimum_idle_baseline_w": 0.1,
+  "idle_baseline_w": 4.7,
+  "expected_storage": "mongodb",
+  "scaphandre_jobs": {
+    "exigence1": "scaphandre-exigence1",
+    "exigence2": "scaphandre-exigence2"
+  },
+  "node_exporter_jobs": {
+    "exigence2": "node-exigence2"
+  },
+  "scope": {
+    "pduSessionId": "1",
+    "dnn": "internet",
+    "snssai": "1-000001",
+    "appId": "energy-results",
+    "flowDescs": [
+      "permit out ip from any to assigned"
+    ]
+  },
+  "events": [
+    {
+      "event": "UE_ENERGY"
+    },
+    {
+      "event": "PDU_SESSION_ENERGY",
+      "params": {
+        "pduSessionId": "1",
+        "dnn": "internet"
+      }
+    },
+    {
+      "event": "UE_SNSSAI_ENERGY",
+      "params": {
+        "snssai": "1-000001"
+      }
+    },
+    {
+      "event": "SERVICE_FLOW_ENERGY",
+      "params": {
+        "appId": "energy-results",
+        "flowDescs": [
+          "permit out ip from any to assigned"
+        ]
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "idle",
+      "kind": "idle"
+    },
+    {
+      "name": "ping-5hz",
+      "kind": "ping",
+      "interval_seconds": 0.2
+    },
+    {
+      "name": "udp-ul-10m",
+      "kind": "iperf3",
+      "protocol": "udp",
+      "direction": "uplink",
+      "bitrate": "10M"
+    },
+    {
+      "name": "udp-dl-10m",
+      "kind": "iperf3",
+      "protocol": "udp",
+      "direction": "downlink",
+      "bitrate": "10M"
+    },
+    {
+      "name": "udp-ul-100m",
+      "kind": "iperf3",
+      "protocol": "udp",
+      "direction": "uplink",
+      "bitrate": "100M"
+    },
+    {
+      "name": "udp-dl-100m",
+      "kind": "iperf3",
+      "protocol": "udp",
+      "direction": "downlink",
+      "bitrate": "100M"
+    },
+    {
+      "name": "tcp-ul-max",
+      "kind": "iperf3",
+      "protocol": "tcp",
+      "direction": "uplink"
+    },
+    {
+      "name": "tcp-dl-max",
+      "kind": "iperf3",
+      "protocol": "tcp",
+      "direction": "downlink"
+    }
+  ]
+}

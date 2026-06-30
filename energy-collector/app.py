@@ -1,7 +1,7 @@
 import os
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib import parse, request
 from urllib.error import URLError
 
@@ -19,6 +19,9 @@ except ImportError:  # pragma: no cover - local fallback if pymongo is missing.
 app = FastAPI(title="Energy Collector / NWDAF-lite")
 
 VALID_SOURCES = {"manual", "android", "upf"}
+PROMETHEUS_ENERGY_MODES = {"prometheus", "scaphandre", "scaphandre_prometheus"}
+POWERAPI_ENERGY_MODES = {"powerapi", "powerapi_smartwatts"}
+EXTERNAL_ENERGY_MODES = {"external", "external_wattmeter"}
 
 
 class UeMapping(BaseModel):
@@ -52,9 +55,20 @@ class AndroidEnergySample(BaseModel):
     source: str = "android"
 
 
+class ExternalEnergySample(BaseModel):
+    source: str = "external_wattmeter"
+    metric: str = "measured_energy"
+    unit: str = "joules"
+    window_start: str
+    window_end: str
+    value: float = Field(ge=0)
+    metadata: dict = Field(default_factory=dict)
+
+
 ue_mappings: dict[str, UeMapping] = {}
 traffic_samples: list[TrafficSample] = []
 android_samples: list[AndroidEnergySample] = []
+external_energy_samples: list[dict] = []
 energy_source_samples: list[dict] = []
 energy_attributions: list[dict] = []
 mongo_client = None
@@ -101,9 +115,18 @@ def get_mongo_db():
         mongo_db.ue_mappings.create_index("ue_ip")
         mongo_db.traffic_samples.create_index([("supi", 1), ("timestamp", 1)])
         mongo_db.android_samples.create_index([("supi", 1), ("timestamp", 1)])
+        mongo_db.external_energy_samples.create_index(
+            [("source", 1), ("window_start", 1), ("window_end", 1)]
+        )
+        mongo_db.external_energy_samples.create_index(
+            [("source", 1), ("metric", 1), ("window_start_dt", 1), ("window_end_dt", 1)]
+        )
         mongo_db.energy_source_samples.create_index([("source", 1), ("window_start", 1), ("window_end", 1)])
         mongo_db.energy_attributions.create_index([("supi", 1), ("event", 1), ("timestamp", 1)])
         mongo_db.energy_attributions.create_index([("source", 1), ("timestamp", 1)])
+        mongo_db.external_energy_samples.create_index("expires_at", expireAfterSeconds=0)
+        mongo_db.energy_source_samples.create_index("expires_at", expireAfterSeconds=0)
+        mongo_db.energy_attributions.create_index("expires_at", expireAfterSeconds=0)
         mongo_connect_failed = False
         print(f"Energy Collector storage: MongoDB {mongo_uri()}/{mongo_db_name()}")
     except PyMongoError as exc:
@@ -136,16 +159,94 @@ def scaphandre_promql_template() -> str:
     )
 
 
+def powerapi_promql_template() -> str:
+    return os.getenv(
+        "POWERAPI_PROMQL_TEMPLATE",
+        "sum(avg_over_time(power_estimation_watts[{window}]))*{duration_seconds}",
+    )
+
+
+def powerapi_comparison_enabled() -> bool:
+    return os.getenv("POWERAPI_COMPARISON_ENABLED", "false").lower() == "true"
+
+
+def external_energy_source_name() -> str:
+    return os.getenv("EXTERNAL_ENERGY_SOURCE", "external_wattmeter")
+
+
+def external_energy_metric_name() -> str:
+    return os.getenv("EXTERNAL_ENERGY_METRIC", "measured_energy")
+
+
 def prometheus_timeout_s() -> float:
     return env_float("PROMETHEUS_TIMEOUT_S", 2.0)
 
 
+def energy_attribution_mode() -> str:
+    mode = os.getenv("ENERGY_ATTRIBUTION_MODE", "traffic_share").lower()
+    if mode not in {"traffic_share", "dynamic_traffic_share"}:
+        return "traffic_share"
+
+    return mode
+
+
+def host_idle_baseline_w() -> float:
+    value = env_float("ENERGY_HOST_IDLE_BASELINE_W", 0.0)
+    return value if math.isfinite(value) and value >= 0 else 0.0
+
+
+def energy_retention_days() -> int:
+    value = env_float("ENERGY_RETENTION_DAYS", 30.0)
+    if not math.isfinite(value) or value <= 0:
+        return 0
+
+    return max(1, int(value))
+
+
+def document_with_expiry(document: dict) -> dict:
+    stored = document.copy()
+    retention_days = energy_retention_days()
+    if retention_days > 0:
+        stored["expires_at"] = datetime.now(timezone.utc) + timedelta(
+            days=retention_days
+        )
+
+    return stored
+
+
+def format_utc(value: datetime) -> str:
+    return (
+        value.astimezone(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return format_utc(datetime.now(timezone.utc))
 
 
 def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def canonical_utc_time(value: str, field_name: str) -> tuple[datetime, str]:
+    try:
+        parsed = parse_time(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must be an ISO 8601 timestamp",
+        ) from exc
+
+    if parsed.tzinfo is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} must include a timezone",
+        )
+
+    parsed = parsed.astimezone(timezone.utc)
+    return parsed, format_utc(parsed)
 
 
 def env_float(name: str, default: float) -> float:
@@ -158,6 +259,36 @@ def env_float(name: str, default: float) -> float:
         return float(value)
     except ValueError:
         return default
+
+
+def normalize_external_energy_sample(sample: ExternalEnergySample) -> dict:
+    source = sample.source.strip()
+    metric = sample.metric.strip()
+    if not source or not metric:
+        raise HTTPException(status_code=400, detail="source and metric are required")
+
+    if sample.unit.lower() not in {"j", "joule", "joules"}:
+        raise HTTPException(status_code=400, detail="unit must be joules")
+
+    if not math.isfinite(sample.value):
+        raise HTTPException(status_code=400, detail="value must be finite")
+
+    start_dt, window_start = canonical_utc_time(
+        sample.window_start, "window_start"
+    )
+    end_dt, window_end = canonical_utc_time(sample.window_end, "window_end")
+    if end_dt <= start_dt:
+        raise HTTPException(status_code=400, detail="window_end must be after window_start")
+
+    return {
+        "source": source,
+        "metric": metric,
+        "unit": "joules",
+        "window_start": window_start,
+        "window_end": window_end,
+        "value": round(sample.value, 6),
+        "metadata": sample.metadata,
+    }
 
 
 def validate_source(source: str) -> None:
@@ -206,16 +337,11 @@ def extract_prometheus_value(payload: dict) -> float | None:
     return total if found else None
 
 
-def query_prometheus_energy(start: datetime, end: datetime) -> dict | None:
-    if energy_source_mode() not in {"prometheus", "scaphandre", "scaphandre_prometheus"}:
-        return None
-
+def query_prometheus_value(query: str, end: datetime) -> float | None:
     base_url = prometheus_url()
     if not base_url:
         return None
 
-    duration_s = (end - start).total_seconds()
-    query = scaphandre_promql_template().replace("{window}", promql_window(duration_s))
     params = parse.urlencode({
         "query": query,
         "time": str(end.timestamp()),
@@ -230,15 +356,43 @@ def query_prometheus_energy(start: datetime, end: datetime) -> dict | None:
         return None
 
     value = extract_prometheus_value(payload)
-    if value is None or value < 0:
+    if value is None or not math.isfinite(value) or value < 0:
+        return None
+
+    return value
+
+
+def render_promql(template: str, duration_s: float) -> str:
+    return (
+        template
+        .replace("{window}", promql_window(duration_s))
+        .replace("{duration_seconds}", str(max(1, int(math.ceil(duration_s)))))
+    )
+
+
+def normalized_prometheus_sample(
+    start: datetime,
+    end: datetime,
+    source: str,
+    metric: str,
+    template: str,
+) -> dict | None:
+    base_url = prometheus_url()
+    if not base_url:
+        return None
+
+    duration_s = (end - start).total_seconds()
+    query = render_promql(template, duration_s)
+    value = query_prometheus_value(query, end)
+    if value is None:
         return None
 
     return {
-        "source": "scaphandre_prometheus",
-        "metric": "host_rapl_energy",
+        "source": source,
+        "metric": metric,
         "unit": "joules",
-        "window_start": start.isoformat().replace("+00:00", "Z"),
-        "window_end": end.isoformat().replace("+00:00", "Z"),
+        "window_start": format_utc(start),
+        "window_end": format_utc(end),
         "value": round(value, 6),
         "metadata": {
             "prometheus_url": base_url,
@@ -247,12 +401,165 @@ def query_prometheus_energy(start: datetime, end: datetime) -> dict | None:
     }
 
 
+def query_prometheus_energy(start: datetime, end: datetime) -> dict | None:
+    return normalized_prometheus_sample(
+        start,
+        end,
+        "scaphandre_prometheus",
+        "host_rapl_energy",
+        scaphandre_promql_template(),
+    )
+
+
+def query_powerapi_energy(start: datetime, end: datetime) -> dict | None:
+    sample = normalized_prometheus_sample(
+        start,
+        end,
+        "powerapi_smartwatts",
+        "estimated_software_energy",
+        powerapi_promql_template(),
+    )
+    if sample is not None:
+        return sample
+
+    return query_external_energy(
+        start,
+        end,
+        "powerapi_smartwatts",
+        "estimated_software_energy",
+    )
+
+
 def store_energy_source_sample(sample: dict) -> None:
     db = get_mongo_db()
     if db is not None:
-        db.energy_source_samples.insert_one(sample.copy())
+        db.energy_source_samples.insert_one(document_with_expiry(sample))
     else:
         energy_source_samples.append(sample)
+
+
+def store_external_energy_sample(sample: dict) -> None:
+    db = get_mongo_db()
+    if db is not None:
+        key = {
+            "source": sample["source"],
+            "metric": sample["metric"],
+            "window_start": sample["window_start"],
+            "window_end": sample["window_end"],
+        }
+        stored = document_with_expiry(sample)
+        stored["window_start_dt"] = parse_time(sample["window_start"])
+        stored["window_end_dt"] = parse_time(sample["window_end"])
+        db.external_energy_samples.replace_one(
+            key,
+            stored,
+            upsert=True,
+        )
+    else:
+        external_energy_samples[:] = [
+            stored for stored in external_energy_samples
+            if not (
+                stored["source"] == sample["source"] and
+                stored["metric"] == sample["metric"] and
+                stored["window_start"] == sample["window_start"] and
+                stored["window_end"] == sample["window_end"]
+            )
+        ]
+        external_energy_samples.append(sample)
+
+
+def query_external_energy(
+    start: datetime,
+    end: datetime,
+    source: str | None = None,
+    metric: str | None = None,
+) -> dict | None:
+    window_start = format_utc(start)
+    window_end = format_utc(end)
+    source = source or external_energy_source_name()
+    metric = metric or external_energy_metric_name()
+    db = get_mongo_db()
+
+    if db is not None:
+        candidates = list(
+            db.external_energy_samples.find(
+                {
+                    "source": source,
+                    "metric": metric,
+                    "window_start_dt": {"$lt": end},
+                    "window_end_dt": {"$gt": start},
+                },
+                {
+                    "_id": 0,
+                    "expires_at": 0,
+                    "window_start_dt": 0,
+                    "window_end_dt": 0,
+                },
+            )
+        )
+    else:
+        candidates = [
+            sample.copy() for sample in external_energy_samples
+            if sample["source"] == source and sample["metric"] == metric
+        ]
+
+    for sample in reversed(candidates):
+        if (
+            sample["window_start"] == window_start and
+            sample["window_end"] == window_end
+        ):
+            return sample.copy()
+
+    overlapping = []
+    for sample in candidates:
+        try:
+            sample_start = parse_time(sample["window_start"])
+            sample_end = parse_time(sample["window_end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        overlap_start = max(start, sample_start)
+        overlap_end = min(end, sample_end)
+        if overlap_end <= overlap_start:
+            continue
+
+        overlapping.append((overlap_start, overlap_end, sample_start, sample_end, sample))
+
+    overlapping.sort(key=lambda item: (item[0], item[1]))
+    if not overlapping:
+        return None
+
+    covered_until = start
+    value = 0.0
+    for overlap_start, overlap_end, sample_start, sample_end, sample in overlapping:
+        # Overlapping source windows are ambiguous and could double-count energy.
+        if overlap_start < covered_until or overlap_start > covered_until:
+            return None
+
+        sample_duration = (sample_end - sample_start).total_seconds()
+        overlap_duration = (overlap_end - overlap_start).total_seconds()
+        if sample_duration <= 0:
+            return None
+
+        value += sample["value"] * overlap_duration / sample_duration
+        covered_until = overlap_end
+
+    if covered_until < end:
+        return None
+
+    return {
+        "source": source,
+        "metric": metric,
+        "unit": "joules",
+        "window_start": window_start,
+        "window_end": window_end,
+        "value": round(value, 6),
+        "metadata": {
+            "aggregation": "overlap_prorated",
+            "inputSamples": len(overlapping),
+            "assumption": "uniform power within each source sample window",
+        },
+    }
 
 
 def store_energy_attribution(response: dict) -> None:
@@ -282,13 +589,32 @@ def store_energy_attribution(response: dict) -> None:
 
     db = get_mongo_db()
     if db is not None:
-        db.energy_attributions.insert_one(document)
+        db.energy_attributions.insert_one(document_with_expiry(document))
     else:
         energy_attributions.append(document)
 
 
 def query_and_store_energy_source(start: datetime, end: datetime) -> dict | None:
-    sample = query_prometheus_energy(start, end)
+    mode = energy_source_mode()
+    sample = None
+
+    if mode in PROMETHEUS_ENERGY_MODES:
+        sample = query_prometheus_energy(start, end)
+    elif mode in POWERAPI_ENERGY_MODES:
+        sample = query_powerapi_energy(start, end)
+    elif mode in EXTERNAL_ENERGY_MODES:
+        sample = query_external_energy(start, end)
+
+    comparisons = []
+    if powerapi_comparison_enabled() and mode not in POWERAPI_ENERGY_MODES:
+        powerapi_sample = query_powerapi_energy(start, end)
+        if powerapi_sample is not None:
+            powerapi_sample["metadata"]["comparison_only"] = True
+            store_energy_source_sample(powerapi_sample)
+            comparisons.append(powerapi_sample)
+
+    if sample is not None and comparisons:
+        sample["comparisons"] = comparisons
 
     if sample is not None:
         store_energy_source_sample(sample)
@@ -314,16 +640,28 @@ def attributed_energy_response(
     ratio = min(1.0, selected_bytes / total_bytes)
     measured_energy = energy_source_sample["value"]
     traffic_estimate_energy = response["energyInfo"]["energy"]
+    mode = energy_attribution_mode()
+    baseline_power_w = host_idle_baseline_w()
+    duration_s = max(0.0, response.get("durationSec", 0.0))
+    baseline_energy = min(measured_energy, baseline_power_w * duration_s)
+    dynamic_energy = max(0.0, measured_energy - baseline_energy)
+    allocatable_energy = (
+        dynamic_energy if mode == "dynamic_traffic_share" else measured_energy
+    )
     response["source"] = energy_source_sample["source"]
-    response["energyInfo"]["energy"] = round(measured_energy * ratio, 6)
+    response["energyInfo"]["energy"] = round(allocatable_energy * ratio, 6)
     response["trafficEstimateEnergy"] = traffic_estimate_energy
     response["energySource"] = energy_source_sample
     response["attribution"] = {
-        "method": "traffic_share",
+        "method": mode,
         "selectedBytes": selected_bytes,
         "totalTrackedBytes": total_bytes,
         "ratio": round(ratio, 6),
         "measuredWindowEnergy": measured_energy,
+        "idleBaselinePowerWatts": baseline_power_w,
+        "baselineEnergy": round(baseline_energy, 6),
+        "dynamicEnergy": round(dynamic_energy, 6),
+        "allocatableEnergy": round(allocatable_energy, 6),
         "trafficEstimateEnergy": traffic_estimate_energy,
     }
     store_energy_attribution(response)
@@ -409,21 +747,32 @@ def health():
 def get_energy_source_status():
     mode = energy_source_mode()
     url = prometheus_url()
+    prometheus_enabled = mode in (PROMETHEUS_ENERGY_MODES | POWERAPI_ENERGY_MODES)
+    external_enabled = mode in EXTERNAL_ENERGY_MODES
 
     return {
         "mode": mode,
-        "enabled": mode in {"prometheus", "scaphandre", "scaphandre_prometheus"} and url is not None,
+        "enabled": (prometheus_enabled and url is not None) or external_enabled,
         "prometheusUrl": url,
         "promqlTemplate": scaphandre_promql_template(),
         "timeoutSec": prometheus_timeout_s(),
+        "attributionMode": energy_attribution_mode(),
+        "idleBaselinePowerWatts": host_idle_baseline_w(),
+        "retentionDays": energy_retention_days(),
+        "externalSource": external_energy_source_name(),
+        "externalMetric": external_energy_metric_name(),
+        "powerApiComparison": {
+            "enabled": powerapi_comparison_enabled(),
+            "promqlTemplate": powerapi_promql_template(),
+        },
         "storage": storage_backend(),
     }
 
 
 @app.get("/energy-sources/window")
 def get_energy_source_window(start: str, end: str):
-    start_dt = parse_time(start)
-    end_dt = parse_time(end)
+    start_dt, start = canonical_utc_time(start, "start")
+    end_dt, end = canonical_utc_time(end, "end")
 
     if end_dt <= start_dt:
         raise HTTPException(status_code=400, detail="end must be after start")
@@ -433,7 +782,7 @@ def get_energy_source_window(start: str, end: str):
     if sample is None:
         return {
             "status": "unavailable",
-            "reason": "energy source disabled or no Prometheus value returned",
+            "reason": "energy source disabled or no value returned for the requested window",
             "energySource": get_energy_source_status(),
         }
 
@@ -444,12 +793,53 @@ def get_energy_source_window(start: str, end: str):
     }
 
 
+@app.post("/energy-sources/samples", status_code=201)
+def add_external_energy_source_sample(sample: ExternalEnergySample):
+    document = normalize_external_energy_sample(sample)
+    store_external_energy_sample(document)
+
+    return {
+        "status": "stored",
+        "sample": document,
+        "storage": storage_backend(),
+    }
+
+
+@app.get("/energy-sources/samples")
+def get_external_energy_source_samples(
+    source: str | None = None,
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    db = get_mongo_db()
+    if db is not None:
+        query = {"source": source} if source is not None else {}
+        return list(
+            db.external_energy_samples.find(
+                query,
+                {
+                    "_id": 0,
+                    "expires_at": 0,
+                    "window_start_dt": 0,
+                    "window_end_dt": 0,
+                },
+            )
+            .sort("window_end", -1)
+            .limit(limit)
+        )
+
+    samples = external_energy_samples
+    if source is not None:
+        samples = [sample for sample in samples if sample["source"] == source]
+
+    return list(reversed(samples[-limit:]))
+
+
 @app.get("/energy-sources/attributions")
 def get_energy_attributions(limit: int = Query(default=10, ge=1, le=100)):
     db = get_mongo_db()
     if db is not None:
         return list(
-            db.energy_attributions.find({}, {"_id": 0})
+            db.energy_attributions.find({}, {"_id": 0, "expires_at": 0})
             .sort("timestamp", -1)
             .limit(limit)
         )
@@ -469,6 +859,8 @@ def upsert_ue_mapping(mapping: UeMapping):
 
     if mapping.timestamp is None:
         mapping.timestamp = utc_now()
+    else:
+        _, mapping.timestamp = canonical_utc_time(mapping.timestamp, "timestamp")
 
     db = get_mongo_db()
     if db is not None:
@@ -520,6 +912,8 @@ def add_traffic_sample(sample: TrafficSample):
 
     if sample.timestamp is None:
         sample.timestamp = utc_now()
+    else:
+        _, sample.timestamp = canonical_utc_time(sample.timestamp, "timestamp")
 
     if sample.supi is None and sample.ue_ip is not None:
         sample.supi = find_supi_by_ue_ip(sample.ue_ip)
@@ -556,6 +950,8 @@ def add_android_sample(sample: AndroidEnergySample):
 
     if sample.timestamp is None:
         sample.timestamp = utc_now()
+    else:
+        _, sample.timestamp = canonical_utc_time(sample.timestamp, "timestamp")
 
     if sample.energy_joules is not None and sample.energy_joules < 0:
         raise HTTPException(status_code=400, detail="energy_joules must be >= 0")
@@ -589,8 +985,8 @@ def get_energy_report(
     appId: str | None = None,
     flowDescs: list[str] | None = Query(default=None),
 ):
-    start_dt = parse_time(start)
-    end_dt = parse_time(end)
+    start_dt, start = canonical_utc_time(start, "start")
+    end_dt, end = canonical_utc_time(end, "end")
     has_scope_filter = (
         pduSessionId is not None or dnn is not None or snssai is not None or
         appId is not None or bool(flowDescs)
