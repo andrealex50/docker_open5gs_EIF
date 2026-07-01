@@ -65,7 +65,8 @@ RUN apt-get update && \
         netbase \
         ifupdown \
         net-tools \
-        iputils-ping && \
+        iputils-ping \
+        iperf3 && \
     apt-get autoremove -y && apt-get autoclean
 
 COPY --from=builder /UERANSIM/build /UERANSIM/build

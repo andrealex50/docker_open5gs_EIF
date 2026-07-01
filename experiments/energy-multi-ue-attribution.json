@@ -1,0 +1,59 @@
+{
+  "campaign": "multi-ue-attribution-local-upf",
+  "collector_url": "http://172.22.0.44:8088",
+  "upf_metrics_url": "http://172.22.0.8:9091/metrics",
+  "upf_container": "upf",
+  "upf_interface": "ogstun",
+  "iperf_server": "10.255.35.34",
+  "window_seconds": 30,
+  "workload_seconds": 25,
+  "cooldown_seconds": 10,
+  "timeout_seconds": 10,
+  "repetitions": 2,
+  "ues": [
+    {
+      "name": "ue1",
+      "container": "nr_ue",
+      "supi": "imsi-001011234567895",
+      "iperf_port": 5201
+    },
+    {
+      "name": "ue2",
+      "container": "nr_ue2",
+      "supi": "imsi-001011234567896",
+      "iperf_port": 5202
+    }
+  ],
+  "scope": {
+    "pduSessionId": "1",
+    "dnn": "internet",
+    "snssai": "1-000001",
+    "appId": "multi-ue-attribution",
+    "flowDescs": [
+      "permit out ip from any to assigned"
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "ue1-10m-ue2-30m",
+      "bitrates": {
+        "ue1": "10M",
+        "ue2": "30M"
+      }
+    },
+    {
+      "name": "ue1-30m-ue2-10m",
+      "bitrates": {
+        "ue1": "30M",
+        "ue2": "10M"
+      }
+    },
+    {
+      "name": "ue1-20m-ue2-20m",
+      "bitrates": {
+        "ue1": "20M",
+        "ue2": "20M"
+      }
+    }
+  ]
+}
