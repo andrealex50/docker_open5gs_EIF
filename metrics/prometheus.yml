@@ -17,17 +17,17 @@ scrape_configs:
   - job_name: 'upf'
     static_configs:
       - targets: ['UPF_METRICS_IP:9091']
-  - job_name: 'scaphandre-exigence1'
+  - job_name: 'scaphandre-primary'
     fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
       - targets: ['SCAPHANDRE_HOST:SCAPHANDRE_PORT']
-  - job_name: 'scaphandre-exigence2'
+  - job_name: 'scaphandre-secondary'
     fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
-      - targets: ['EXIGENCE2_HOST:8080']
-  - job_name: 'node-exigence2'
+      - targets: ['SECONDARY_TELEMETRY_HOST:8080']
+  - job_name: 'node-secondary'
     static_configs:
-      - targets: ['EXIGENCE2_HOST:9100']
+      - targets: ['SECONDARY_TELEMETRY_HOST:9100']
   - job_name: 'powerapi-smartwatts'
     static_configs:
       - targets: ['POWERAPI_HOST:POWERAPI_PORT']

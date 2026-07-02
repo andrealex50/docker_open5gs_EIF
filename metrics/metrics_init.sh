@@ -48,7 +48,7 @@ sed -i 's|HSS_IP|'$HSS_IP'|g' /config/prometheus.yml
 sed -i 's|PCRF_IP|'$PCRF_IP'|g' /config/prometheus.yml
 sed -i 's|SCAPHANDRE_HOST|'$SCAPHANDRE_HOST'|g' /config/prometheus.yml
 sed -i 's|SCAPHANDRE_PORT|'$SCAPHANDRE_PORT'|g' /config/prometheus.yml
-sed -i 's|EXIGENCE2_HOST|'$EXIGENCE2_HOST'|g' /config/prometheus.yml
+sed -i 's|SECONDARY_TELEMETRY_HOST|'$SECONDARY_TELEMETRY_HOST'|g' /config/prometheus.yml
 sed -i 's|POWERAPI_HOST|'$POWERAPI_HOST'|g' /config/prometheus.yml
 sed -i 's|POWERAPI_PORT|'$POWERAPI_PORT'|g' /config/prometheus.yml
 

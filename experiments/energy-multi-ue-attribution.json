@@ -4,7 +4,7 @@
   "upf_metrics_url": "http://172.22.0.8:9091/metrics",
   "upf_container": "upf",
   "upf_interface": "ogstun",
-  "iperf_server": "10.255.35.34",
+  "iperf_server": "192.0.2.20",
   "window_seconds": 30,
   "workload_seconds": 25,
   "cooldown_seconds": 10,

@@ -1,6 +1,6 @@
 {
   "campaign": "baseline-local-upf",
-  "topology": "UPF, core, gNB and UE on exigence1; iperf3 endpoint on exigence2",
+  "topology": "UPF, core, gNB and UE on the primary host; iperf3 endpoint on a secondary host",
   "collector_url": "http://172.22.0.44:8088",
   "prometheus_url": "http://localhost:9090",
   "upf_metrics_url": "http://172.22.0.8:9091/metrics",
@@ -12,7 +12,7 @@
   "docker_command": ["docker"],
   "supi": "imsi-001011234567895",
   "ue_ip": "192.168.100.2",
-  "iperf_server": "10.255.35.34",
+  "iperf_server": "192.0.2.20",
   "window_seconds": 30,
   "workload_seconds": 25,
   "metrics_settle_seconds": 2,
@@ -21,8 +21,8 @@
   "http_timeout_seconds": 10,
   "estimator_start_timeout_seconds": 20,
   "repetitions": 3,
-  "primary_energy_alias": "exigence1",
-  "primary_energy_job": "scaphandre-exigence1",
+  "primary_energy_alias": "primary",
+  "primary_energy_job": "scaphandre-primary",
   "expected_energy_mode": "scaphandre_prometheus",
   "expected_attribution_mode": "dynamic_traffic_share",
   "minimum_idle_baseline_w": 0.1,
@@ -30,7 +30,7 @@
   "expected_storage": "mongodb",
   "baseline_calibration": {
     "observedAt": "2026-06-30T12:00:24Z",
-    "job": "scaphandre-exigence1",
+    "job": "scaphandre-primary",
     "observationDurationSec": 300,
     "rateWindowSec": 30,
     "stepSec": 5,
@@ -43,11 +43,11 @@
     "configuredBaselineWatts": 4.818464
   },
   "scaphandre_jobs": {
-    "exigence1": "scaphandre-exigence1",
-    "exigence2": "scaphandre-exigence2"
+    "primary": "scaphandre-primary",
+    "secondary": "scaphandre-secondary"
   },
   "node_exporter_jobs": {
-    "exigence2": "node-exigence2"
+    "secondary": "node-secondary"
   },
   "scope": {
     "pduSessionId": "1",

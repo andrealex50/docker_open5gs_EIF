@@ -19,7 +19,7 @@ def parse_args():
     )
     parser.add_argument(
         "--job",
-        default="scaphandre-exigence1",
+        default="scaphandre-primary",
         help="Scaphandre Prometheus job label",
     )
     parser.add_argument(
