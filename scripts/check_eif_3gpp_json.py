@@ -94,8 +94,8 @@ def check_repo_static(root: Path) -> None:
         "EnergyInfo serializer must emit JSON key 'energy'",
     )
     require(
-        'cJSON_AddNumberToObject(item, "energyConsumption"' not in energy_info_c_text,
-        "EnergyInfo serializer must not emit JSON key 'energyConsumption'",
+        '"energyConsumption"' not in energy_info_c_text,
+        "EnergyInfo model must not serialize or parse JSON key 'energyConsumption'",
     )
 
 

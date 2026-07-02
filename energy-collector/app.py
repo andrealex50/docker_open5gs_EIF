@@ -26,6 +26,7 @@ EXTERNAL_ENERGY_MODES = {"external", "external_wattmeter"}
 
 class UeMapping(BaseModel):
     supi: str
+    gpsi: str | None = None
     ue_ip: str
     source: str = "manual"
     timestamp: str | None = None
@@ -112,6 +113,11 @@ def get_mongo_db():
         mongo_client.admin.command("ping")
         mongo_db = mongo_client[mongo_db_name()]
         mongo_db.ue_mappings.create_index("supi", unique=True)
+        mongo_db.ue_mappings.create_index(
+            "gpsi",
+            unique=True,
+            partialFilterExpression={"gpsi": {"$type": "string"}},
+        )
         mongo_db.ue_mappings.create_index("ue_ip")
         mongo_db.traffic_samples.create_index([("supi", 1), ("timestamp", 1)])
         mongo_db.android_samples.create_index([("supi", 1), ("timestamp", 1)])
@@ -695,6 +701,19 @@ def find_ue_ip_by_supi(supi: str) -> str | None:
     return mapping.ue_ip
 
 
+def find_supi_by_gpsi(gpsi: str) -> str | None:
+    db = get_mongo_db()
+    if db is not None:
+        mapping = db.ue_mappings.find_one({"gpsi": gpsi}, {"_id": 0})
+        return mapping["supi"] if mapping else None
+
+    for supi, mapping in ue_mappings.items():
+        if mapping.gpsi == gpsi:
+            return supi
+
+    return None
+
+
 def matches_optional_filter(sample_value: str | None, query_value: str | None) -> bool:
     if query_value is None:
         return True
@@ -865,6 +884,8 @@ def upsert_ue_mapping(mapping: UeMapping):
     db = get_mongo_db()
     if db is not None:
         document = model_to_dict(mapping)
+        if mapping.gpsi is None:
+            document.pop("gpsi", None)
         db.ue_mappings.replace_one({"supi": mapping.supi}, document, upsert=True)
         total_mappings = db.ue_mappings.count_documents({})
     else:
@@ -975,16 +996,28 @@ def add_android_sample(sample: AndroidEnergySample):
 
 @app.get("/energy/v1/report")
 def get_energy_report(
-    supi: str,
     event: str,
     start: str,
     end: str,
+    supi: str | None = None,
+    gpsi: str | None = None,
     pduSessionId: str | None = None,
     dnn: str | None = None,
     snssai: str | None = None,
     appId: str | None = None,
     flowDescs: list[str] | None = Query(default=None),
 ):
+    if bool(supi) == bool(gpsi):
+        raise HTTPException(
+            status_code=400,
+            detail="exactly one of supi or gpsi is required",
+        )
+
+    if gpsi is not None:
+        supi = find_supi_by_gpsi(gpsi)
+        if supi is None:
+            raise HTTPException(status_code=404, detail="GPSI mapping not found")
+
     start_dt, start = canonical_utc_time(start, "start")
     end_dt, end = canonical_utc_time(end, "end")
     has_scope_filter = (
