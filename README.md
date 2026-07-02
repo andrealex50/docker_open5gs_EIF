@@ -1,5 +1,256 @@
-# docker_open5gs
-Quite contrary to the name of the repository, this repository contains docker files to deploy an Over-The-Air (OTA) or RF simulated 4G/5G network using following projects:
+# Open5GS EIF Energy Exposure Testbed
+
+This repository extends the Open5GS Docker testbed with an Energy Information
+Function (EIF) implementing the 3GPP energy event exposure flow. A consumer can
+create an energy subscription, the EIF queries an independent Energy Collector,
+and the resulting `EnergyEeReport` is delivered to the subscribed `notifUri`
+over HTTP/2.
+
+The implementation is based on the Neif Event Exposure API from 3GPP TS 29.566.
+Its `EnergyInfo` JSON representation follows TS 29.122 and uses the required
+numeric field `energy`, expressed in joules.
+
+## End-to-end architecture
+
+```text
+UE traffic / Android samples / host energy counters / external meter
+                              |
+                              v
+                    Energy Collector
+                 normalization + attribution
+                              |
+                              v
+                           MongoDB
+                              |
+                 GET /energy/v1/report
+                              |
+                              v
+                             EIF
+                    Neif Event Exposure API
+                              |
+                    HTTP/2 h2c notification
+                              |
+                              v
+                           notifUri
+```
+
+The EIF remains independent from the measurement technology. It only requests
+an energy value for a target and time window, then exposes that value through a
+3GPP-facing notification. Measurement, normalization, persistence and energy
+attribution belong to the Collector.
+
+## Implemented functionality
+
+### EIF
+
+- `POST`, `GET`, `PUT`, `PATCH` and `DELETE` operations under
+  `/neif-ee/v1/subscriptions`.
+- Direct HTTP/2 h2c callback delivery to the stored `notifUri`.
+- Subscription targeting by either SUPI or GPSI.
+- Independent scheduling state for each subscription set.
+- Support for `repPeriod`, `repPeriodThres`, `enrgRepThres`, `repTimeWin` and
+  `maxReportNbr`.
+- Validation of identifiers, event scope, reporting parameters and callback URI.
+- Safe behavior when the Collector or callback endpoint is unavailable.
+- No empty notifications: every callback contains at least one report.
+
+The following energy events are supported:
+
+| Event | Scope used by the implementation |
+| --- | --- |
+| `UE_ENERGY` | UE identified by SUPI or GPSI |
+| `PDU_SESSION_ENERGY` | UE plus DNN and/or S-NSSAI context |
+| `UE_SNSSAI_ENERGY` | UE plus S-NSSAI |
+| `SERVICE_FLOW_ENERGY` | UE, session context and `appId` or `flowDescs` |
+
+The notification payload contains the standards-aligned representation:
+
+```json
+{
+  "subId": "1",
+  "reports": [
+    {
+      "event": "UE_ENERGY",
+      "subscSetId": "ue-energy",
+      "timeStamp": "2026-01-01T12:00:05Z",
+      "energyInfo": {
+        "energy": 2.75,
+        "energyReportTimeStamp": "2026-01-01T12:00:05Z"
+      }
+    }
+  ]
+}
+```
+
+### Energy Collector
+
+The FastAPI Collector provides a stable boundary between the EIF and the energy
+source. It supports:
+
+- UE mappings between SUPI, optional GPSI and UE IP address.
+- UPF traffic, Android energy and external energy samples.
+- Prometheus windows backed by Scaphandre hardware energy counters.
+- A normalized source schema containing source, metric, unit, window and value.
+- MongoDB persistence, with an in-memory fallback when MongoDB is unavailable.
+- Filtering by PDU session, DNN, S-NSSAI, application and flow description.
+- Stored energy-source samples and attribution results with retention indexes.
+
+The preferred source on supported bare-metal hosts is:
+
+```text
+Linux powercap/RAPL -> Scaphandre -> Prometheus -> Energy Collector
+```
+
+When hardware energy counters are unavailable, the Collector can use Android
+samples, an external wattmeter, or the traffic estimator:
+
+```text
+E = P_idle * duration + alpha_tx * tx_bytes + alpha_rx * rx_bytes
+```
+
+For measured host energy, the dynamic attribution mode subtracts the calibrated
+idle baseline and distributes the remaining energy according to the selected
+UE traffic share. This is attribution of infrastructure energy, not a direct
+physical measurement of the UE modem.
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `base/open5gs-EIF` | Open5GS fork containing the EIF network function |
+| `eif/` | EIF runtime configuration |
+| `energy-collector/` | Collector API, source normalization and MongoDB storage |
+| `metrics/` | Prometheus configuration |
+| `scripts/upf_traffic_estimator.py` | Per-UE UPF traffic measurement |
+| `scripts/android_radio_estimator.py` | Android radio-profile estimator |
+| `scripts/check_eif_3gpp_json.py` | Static 3GPP JSON contract checks |
+| `scripts/validate_energy_source_integration.sh` | Collector and EIF integration checks |
+| `experiments/` | Reproducible measurement campaign definitions |
+
+`base/open5gs-EIF` is a Git submodule and must be initialized after cloning.
+
+## Quick start
+
+### 1. Build the local images
+
+```bash
+git submodule update --init --recursive
+
+docker build --force-rm -t docker_open5gs ./base
+docker build --force-rm -t docker_ueransim ./ueransim
+```
+
+### 2. Start the 5G core, EIF and Collector
+
+```bash
+docker compose -f sa-deploy.yaml up -d \
+  mongo nrf scp amf smf upf eif energy-collector metrics
+
+docker compose -f nr-gnb.yaml up -d
+docker compose -f nr-ue.yaml up -d
+```
+
+### 3. Start the HTTP/2 test callback
+
+Run this in a separate terminal:
+
+```bash
+./scripts/notify_h2_server.sh
+```
+
+### 4. Collect one UPF traffic window
+
+The current user must be allowed to access the Docker socket. Otherwise, run
+the estimator with appropriate privileges.
+
+```bash
+docker exec nr_ue sh -lc \
+  'ping -c 30 -I uesimtun0 8.8.8.8 >/tmp/ue-ping.log 2>&1 &' \
+  && python3 scripts/upf_traffic_estimator.py \
+    --source ue-iptables \
+    --register-mapping \
+    --post
+```
+
+### 5. Create a UE energy subscription
+
+```bash
+curl --http2-prior-knowledge -i \
+  http://172.22.0.43:7777/neif-ee/v1/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "notifUri": "http://172.22.0.45:9998/notify",
+    "eventsSubscSets": {
+      "ue-energy": {
+        "subscSetId": "ue-energy",
+        "event": "UE_ENERGY",
+        "supi": "imsi-001011234567895",
+        "repPeriod": 5,
+        "maxReportNbr": 3
+      }
+    }
+  }'
+```
+
+The request returns `201 Created`. The callback server then receives periodic
+notifications containing `energyInfo.energy`.
+
+## Validation
+
+The implementation has been exercised with:
+
+- valid and invalid subscription payloads;
+- all four energy event types;
+- SUPI- and GPSI-based subscriptions;
+- periodic, threshold and time-window reporting;
+- multiple concurrent subscriptions and repeated callbacks;
+- Collector downtime and recovery;
+- MongoDB persistence across Collector restarts;
+- Scaphandre, Prometheus and UPF traffic integration;
+- HTTP/2 callback delivery and final JSON serialization.
+
+Useful local checks:
+
+```bash
+python3 scripts/check_eif_3gpp_json.py
+python3 -m py_compile energy-collector/app.py scripts/upf_traffic_estimator.py
+git diff --check
+```
+
+With the Collector running, its unit tests can be executed inside the container:
+
+```bash
+docker exec energy-collector python -m unittest -v test_app
+```
+
+## Current limitations
+
+- Host package energy cannot be interpreted as direct UE modem energy. The
+  per-UE value is an attribution based on observed traffic and configured scope.
+- Traffic coefficients and idle baseline are hardware- and scenario-dependent
+  and require calibration.
+- Scaphandre hardware counters normally require a supported bare-metal host;
+  virtual machines may not expose powercap/RAPL correctly.
+- EIF subscriptions are currently held in memory and consumers must subscribe
+  again after an EIF restart.
+- The callback uses HTTP/2 cleartext for laboratory validation. Production use
+  requires TLS, authentication, authorization and operational hardening.
+- Service-flow accuracy depends on the available application and flow metadata.
+
+## Acknowledgements
+
+EIF-related extensions were developed at
+[Instituto de Telecomunicacoes](https://www.it.pt/) in the context of the
+EXIGENCE project, funded by the European Union's Horizon Europe research and
+innovation programme under grant agreement No. 101139120.
+
+Copyright (c) 2026 Instituto de Telecomunicacoes and contributors.
+
+## Upstream deployment base
+
+The project builds on the `docker_open5gs` deployment environment, which can
+deploy OTA or RF-simulated 4G/5G networks using the following projects:
+
 - Core Network (4G/5G) - open5gs - https://github.com/open5gs/open5gs
 - IMS (VoLTE + VoNR) - kamailio - https://github.com/kamailio/kamailio
 - IMS HSS - https://github.com/nickvsnetworking/pyhss
@@ -16,24 +267,7 @@ Quite contrary to the name of the repository, this repository contains docker fi
   - https://gitea.osmocom.org/ims-volte-vowifi/strongswan-epdg
 - SWu-IKEv2 - https://github.com/fasferraz/SWu-IKEv2
 
-## EIF extensions
-
-This fork includes EIF energy exposure extensions for Open5GS, including:
-
-- EIF support for energy event exposure subscriptions.
-- Integration with an external Energy Collector.
-- HTTP/2 h2c notification delivery to the subscribed `notifUri`.
-- UPF/traffic-based energy sample collection and MongoDB-backed Collector persistence.
-
-## Acknowledgements
-
-EIF-related extensions in this fork were developed at [Instituto de Telecomunicacoes](https://www.it.pt/)
-in the context of the EXIGENCE project, funded by the European Union's Horizon
-Europe research and innovation programme under grant agreement No. 101139120.
-
-Copyright (c) 2026 Instituto de Telecomunicacoes and contributors.
-
-## Table of Contents
+## Upstream documentation contents
 
 - [Tested Setup](#tested-setup)
 - [Prepare Docker images](#prepare-docker-images)
